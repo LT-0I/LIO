@@ -4,11 +4,33 @@ project(lio_livox)
 SET(CMAKE_BUILD_TYPE "Release")
 #set(CMAKE_CXX_FLAGS "-std=c++11")
 set(CMAKE_CXX_STANDARD 14)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+
+# ------------------------------------------------------------------------------
+# ARM (aarch64) specific optimization flags
+# ------------------------------------------------------------------------------
+string(TOLOWER "${CMAKE_SYSTEM_PROCESSOR}" SYS_ARCH_LOWER)
+if(SYS_ARCH_LOWER MATCHES "aarch64" OR SYS_ARCH_LOWER MATCHES "arm64")
+  message(STATUS "Detected ARM architecture: ${CMAKE_SYSTEM_PROCESSOR}")
+  set(ARM_OPT_FLAGS "-mcpu=cortex-a76 -mtune=cortex-a76.cortex-a55 -O3 -ffast-math -ftree-vectorize -funroll-loops -falign-loops=32 -pipe")
+  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${ARM_OPT_FLAGS} -fopenmp")
+  set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} ${ARM_OPT_FLAGS} -fopenmp")
+  add_definitions(-DEIGEN_NO_DEBUG -DEIGEN_STRONG_INLINE=inline -DEIGEN_UNROLLING_LIMIT=256)
+  if(CMAKE_BUILD_TYPE STREQUAL "Release")
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -flto")
+    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -flto")
+    set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -flto")
+  endif()
+else()
+  message(STATUS "Detected non-ARM architecture: ${CMAKE_SYSTEM_PROCESSOR}")
+  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -march=native -O3")
+  set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -march=native -O3")
+endif()
+
 set(Ceres_DIR "/usr/local/lib/cmake/Ceres") 
 #SET(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++0x")
 SET(CMAKE_MODULE_PATH ${PROJECT_SOURCE_DIR}/cmake)
 set(OpenCV_DIR "/usr/local/opencv-4.2.0/lib/cmake/opencv4")
-set(CMAKE_CXX_STANDARD_REQUIRED ON)
 find_package(catkin REQUIRED COMPONENTS
   	     message_generation
   	     geometry_msgs

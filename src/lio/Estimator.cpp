@@ -56,49 +56,49 @@ Estimator::~Estimator(){
   pcl::PointCloud<PointType>::Ptr laserCloudNonFeature_to_map(new pcl::PointCloud<PointType>);
   Eigen::Matrix4d transform;
   while(true){
-    std::unique_lock<std::mutex> locker(mtx_Map);
-    if(!laserCloudCornerForMap->empty()){
+      std::unique_lock<std::mutex> locker(mtx_Map);
+      if(!laserCloudCornerForMap->empty()){
 
-      map_update_ID ++;
+        map_update_ID ++;
 
-      map_manager->featureAssociateToMap(laserCloudCornerForMap,
-                                         laserCloudSurfForMap,
-                                         laserCloudNonFeatureForMap,
-                                         laserCloudCorner,
-                                         laserCloudSurf,
-                                         laserCloudNonFeature,
-                                         transformForMap);
-      laserCloudCornerForMap->clear();
-      laserCloudSurfForMap->clear();
-      laserCloudNonFeatureForMap->clear();
-      transform = transformForMap;
-      locker.unlock();
+        map_manager->featureAssociateToMap(laserCloudCornerForMap,
+                                           laserCloudSurfForMap,
+                                           laserCloudNonFeatureForMap,
+                                           laserCloudCorner,
+                                           laserCloudSurf,
+                                           laserCloudNonFeature,
+                                           transformForMap);
+        laserCloudCornerForMap->clear();
+        laserCloudSurfForMap->clear();
+        laserCloudNonFeatureForMap->clear();
+        transform = transformForMap;
+        locker.unlock();
 
-      *laserCloudCorner_to_map += *laserCloudCorner;
-      *laserCloudSurf_to_map += *laserCloudSurf;
-      *laserCloudNonFeature_to_map += *laserCloudNonFeature;
+        *laserCloudCorner_to_map += *laserCloudCorner;
+        *laserCloudSurf_to_map += *laserCloudSurf;
+        *laserCloudNonFeature_to_map += *laserCloudNonFeature;
 
-      laserCloudCorner->clear();
-      laserCloudSurf->clear();
-      laserCloudNonFeature->clear();
+        laserCloudCorner->clear();
+        laserCloudSurf->clear();
+        laserCloudNonFeature->clear();
 
-      if(map_update_ID % map_skip_frame == 0){
-        map_manager->MapIncrement(laserCloudCorner_to_map, 
-                                  laserCloudSurf_to_map, 
-                                  laserCloudNonFeature_to_map,
-                                  transform);
+        if(map_update_ID % map_skip_frame == 0){
+          map_manager->MapIncrement(laserCloudCorner_to_map, 
+                                    laserCloudSurf_to_map, 
+                                    laserCloudNonFeature_to_map,
+                                    transform);
 
-        laserCloudCorner_to_map->clear();
-        laserCloudSurf_to_map->clear();
-        laserCloudNonFeature_to_map->clear();
-      }
-      
-    }else
-      locker.unlock();
+          laserCloudCorner_to_map->clear();
+          laserCloudSurf_to_map->clear();
+          laserCloudNonFeature_to_map->clear();
+        }
+        
+      }else
+        locker.unlock();
 
-    std::chrono::milliseconds dura(2);
-    std::this_thread::sleep_for(dura);
-  }
+      std::chrono::milliseconds dura(2);
+      std::this_thread::sleep_for(dura);
+    }
 }
 
 void Estimator::processPointToLine(std::vector<ceres::CostFunction *>& edges,
@@ -108,6 +108,10 @@ void Estimator::processPointToLine(std::vector<ceres::CostFunction *>& edges,
                                    const pcl::KdTreeFLANN<PointType>::Ptr& kdtreeLocal,
                                    const Eigen::Matrix4d& exTlb,
                                    const Eigen::Matrix4d& m4d){
+
+  if(!laserCloudCorner || laserCloudCorner->empty()) {
+    return;
+  }
 
   Eigen::Matrix4d Tbl = Eigen::Matrix4d::Identity();
   Tbl.topLeftCorner(3,3) = exTlb.topLeftCorner(3,3).transpose();
@@ -485,6 +489,10 @@ void Estimator::processPointToPlanVec(std::vector<ceres::CostFunction *>& edges,
                                    const pcl::KdTreeFLANN<PointType>::Ptr& kdtreeLocal,
                                    const Eigen::Matrix4d& exTlb,
                                    const Eigen::Matrix4d& m4d){
+  if(!laserCloudSurf || laserCloudSurf->empty()) {
+    return;
+  }
+  
   Eigen::Matrix4d Tbl = Eigen::Matrix4d::Identity();
   Tbl.topLeftCorner(3,3) = exTlb.topLeftCorner(3,3).transpose();
   Tbl.topRightCorner(3,1) = -1.0 * Tbl.topLeftCorner(3,3) * exTlb.topRightCorner(3,1);
@@ -666,6 +674,10 @@ void Estimator::processNonFeatureICP(std::vector<ceres::CostFunction *>& edges,
                                      const pcl::KdTreeFLANN<PointType>::Ptr& kdtreeLocal,
                                      const Eigen::Matrix4d& exTlb,
                                      const Eigen::Matrix4d& m4d){
+  if(!laserCloudNonFeature || laserCloudNonFeature->empty()) {
+    return;
+  }
+  
   Eigen::Matrix4d Tbl = Eigen::Matrix4d::Identity();
   Tbl.topLeftCorner(3,3) = exTlb.topLeftCorner(3,3).transpose();
   Tbl.topRightCorner(3,1) = -1.0 * Tbl.topLeftCorner(3,3) * exTlb.topRightCorner(3,1);
@@ -925,9 +937,13 @@ void Estimator::Estimate(std::list<LidarFrame>& lidarFrameList,
   Eigen::Matrix4d transformTobeMapped = Eigen::Matrix4d::Identity();
   Eigen::Matrix3d exRbl = exTlb.topLeftCorner(3,3).transpose();
   Eigen::Vector3d exPbl = -1.0 * exRbl * exTlb.topRightCorner(3,1);
-  kdtreeCornerFromLocal->setInputCloud(laserCloudCornerFromLocal);
-  kdtreeSurfFromLocal->setInputCloud(laserCloudSurfFromLocal);
-  kdtreeNonFeatureFromLocal->setInputCloud(laserCloudNonFeatureFromLocal);
+  
+  if(laserCloudCornerFromLocal->size() > 0)
+    kdtreeCornerFromLocal->setInputCloud(laserCloudCornerFromLocal);
+  if(laserCloudSurfFromLocal->size() > 0)
+    kdtreeSurfFromLocal->setInputCloud(laserCloudSurfFromLocal);
+  if(laserCloudNonFeatureFromLocal->size() > 0)
+    kdtreeNonFeatureFromLocal->setInputCloud(laserCloudNonFeatureFromLocal);
 
   std::unique_lock<std::mutex> locker3(map_manager->mtx_MapManager);
   for(int i = 0; i < 4851; i++){

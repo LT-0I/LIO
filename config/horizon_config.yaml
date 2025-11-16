@@ -13,5 +13,5 @@ FlatThreshold: 0.02 # cloud curvature threshold of flat feature
 BreakCornerDis: 1 # break distance of break points
 LidarNearestDis: 1.0 # if(depth < LidarNearestDis) do not use this point 
 KdTreeCornerOutlierDis: 0.2 # corner filter threshold
-Use_seg: 1 # use segment algorithm
+Use_seg: 0 # use segment algorithm - DISABLED to prevent crashes
 map_skip_frame: 2

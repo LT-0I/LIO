@@ -45,8 +45,8 @@ void pubOdometry(const Eigen::Matrix4d& newPose, double& timefullCloud){
   Eigen::Matrix3d Rcurr = newPose.topLeftCorner(3, 3);
   Eigen::Quaterniond newQuat(Rcurr);
   Eigen::Vector3d newPosition = newPose.topRightCorner(3, 1);
-  laserOdometry.header.frame_id = "/world";
-  laserOdometry.child_frame_id = "/livox_frame";
+  laserOdometry.header.frame_id = "world";
+  laserOdometry.child_frame_id = "livox_frame";
   laserOdometry.header.stamp = ros::Time().fromSec(timefullCloud);
   laserOdometry.pose.pose.orientation.x = newQuat.x();
   laserOdometry.pose.pose.orientation.y = newQuat.y();
@@ -62,11 +62,11 @@ void pubOdometry(const Eigen::Matrix4d& newPose, double& timefullCloud){
   laserPose.pose = laserOdometry.pose.pose;
   laserOdoPath.header.stamp = laserOdometry.header.stamp;
   laserOdoPath.poses.push_back(laserPose);
-  laserOdoPath.header.frame_id = "/world";
+  laserOdoPath.header.frame_id = "world";
   pubLaserOdometryPath.publish(laserOdoPath);
 
-  laserOdometryTrans.frame_id_ = "/world";
-  laserOdometryTrans.child_frame_id_ = "/livox_frame";
+  laserOdometryTrans.frame_id_ = "world";
+  laserOdometryTrans.child_frame_id_ = "livox_frame";
   laserOdometryTrans.stamp_ = ros::Time().fromSec(timefullCloud);
   laserOdometryTrans.setRotation(tf::Quaternion(newQuat.x(), newQuat.y(), newQuat.z(), newQuat.w()));
   laserOdometryTrans.setOrigin(tf::Vector3(newPosition.x(), newPosition.y(), newPosition.z()));
@@ -88,6 +88,10 @@ void pubOdometry(const Eigen::Matrix4d& newPose, double& timefullCloud){
 
 void fullCallBack(const sensor_msgs::PointCloud2ConstPtr &msg){
   // push lidar msg to queue
+  if(!msg || msg->data.empty()) {
+    ROS_WARN("Received empty point cloud message");
+    return;
+  }
 	std::unique_lock<std::mutex> lock(_mutexLidarQueue);
   _lidarMsgQueue.push(msg);
 }
@@ -384,6 +388,13 @@ void process(){
     lock_lidar.unlock();
 
     if(newfullCloud){
+      
+      // Check if point cloud is empty
+      if(laserCloudFullRes->empty()) {
+        ROS_WARN("Received empty point cloud, skipping frame");
+        time_last_lidar = time_curr_lidar;
+        continue;
+      }
 
       nav_msgs::Odometry debugInfo;
       debugInfo.pose.pose.position.x = 0;
@@ -499,18 +510,21 @@ void process(){
 	    // publish odometry rostopic
 	    pubOdometry(transformTobeMapped, lidar_list->front().timeStamp);
 
-      // publish lidar points
+      // publish lidar points (with downsampling for rviz performance)
       int laserCloudFullResNum = lidar_list->front().laserCloud->points.size();
       pcl::PointCloud<PointType>::Ptr laserCloudAfterEstimate(new pcl::PointCloud<PointType>());
       laserCloudAfterEstimate->reserve(laserCloudFullResNum);
-      for (int i = 0; i < laserCloudFullResNum; i++) {
+      
+      // Downsample by factor of 3 for rviz visualization (reduce CPU load)
+      for (int i = 0; i < laserCloudFullResNum; i+=3) {
         PointType temp_point;
         MAP_MANAGER::pointAssociateToMap(&lidar_list->front().laserCloud->points[i], &temp_point, transformTobeMapped);
         laserCloudAfterEstimate->push_back(temp_point);
       }
+      
       sensor_msgs::PointCloud2 laserCloudMsg;
       pcl::toROSMsg(*laserCloudAfterEstimate, laserCloudMsg);
-      laserCloudMsg.header.frame_id = "/world";
+      laserCloudMsg.header.frame_id = "world";
       laserCloudMsg.header.stamp.fromSec(lidar_list->front().timeStamp);
       pubFullLaserCloud.publish(laserCloudMsg);
 

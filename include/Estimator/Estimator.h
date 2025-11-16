@@ -59,19 +59,20 @@ public:
 			valid = false;
 			error = 0;
 		}
-		double ComputeError(const Eigen::Matrix4d& pose){
-			Eigen::Vector3d P_to_Map = pose.topLeftCorner(3,3) * pointOri + pose.topRightCorner(3,1);
-			double l12 = std::sqrt((lineP1(0) - lineP2(0))*(lineP1(0) - lineP2(0)) + (lineP1(1) - lineP2(1))*
-																						(lineP1(1) - lineP2(1)) + (lineP1(2) - lineP2(2))*(lineP1(2) - lineP2(2)));
-			double a012 = std::sqrt(
-							((P_to_Map(0) - lineP1(0)) * (P_to_Map(1) - lineP2(1)) - (P_to_Map(0) - lineP2(0)) * (P_to_Map(1) - lineP1(1)))
-							* ((P_to_Map(0) - lineP1(0)) * (P_to_Map(1) - lineP2(1)) - (P_to_Map(0) - lineP2(0)) * (P_to_Map(1) - lineP1(1)))
-							+ ((P_to_Map(0) - lineP1(0)) * (P_to_Map(2) - lineP2(2)) - (P_to_Map(0) - lineP2(0)) * (P_to_Map(2) - lineP1(2)))
-								* ((P_to_Map(0) - lineP1(0)) * (P_to_Map(2) - lineP2(2)) - (P_to_Map(0) - lineP2(0)) * (P_to_Map(2) - lineP1(2)))
-							+ ((P_to_Map(1) - lineP1(1)) * (P_to_Map(2) - lineP2(2)) - (P_to_Map(1) - lineP2(1)) * (P_to_Map(2) - lineP1(2)))
-								* ((P_to_Map(1) - lineP1(1)) * (P_to_Map(2) - lineP2(2)) - (P_to_Map(1) - lineP2(1)) * (P_to_Map(2) - lineP1(2))));
-			error = a012 / l12;
-		}
+	double ComputeError(const Eigen::Matrix4d& pose){
+		Eigen::Vector3d P_to_Map = pose.topLeftCorner(3,3) * pointOri + pose.topRightCorner(3,1);
+		double l12 = std::sqrt((lineP1(0) - lineP2(0))*(lineP1(0) - lineP2(0)) + (lineP1(1) - lineP2(1))*
+																					(lineP1(1) - lineP2(1)) + (lineP1(2) - lineP2(2))*(lineP1(2) - lineP2(2)));
+		double a012 = std::sqrt(
+						((P_to_Map(0) - lineP1(0)) * (P_to_Map(1) - lineP2(1)) - (P_to_Map(0) - lineP2(0)) * (P_to_Map(1) - lineP1(1)))
+						* ((P_to_Map(0) - lineP1(0)) * (P_to_Map(1) - lineP2(1)) - (P_to_Map(0) - lineP2(0)) * (P_to_Map(1) - lineP1(1)))
+						+ ((P_to_Map(0) - lineP1(0)) * (P_to_Map(2) - lineP2(2)) - (P_to_Map(0) - lineP2(0)) * (P_to_Map(2) - lineP1(2)))
+							* ((P_to_Map(0) - lineP1(0)) * (P_to_Map(2) - lineP2(2)) - (P_to_Map(0) - lineP2(0)) * (P_to_Map(2) - lineP1(2)))
+						+ ((P_to_Map(1) - lineP1(1)) * (P_to_Map(2) - lineP2(2)) - (P_to_Map(1) - lineP2(1)) * (P_to_Map(2) - lineP1(2)))
+							* ((P_to_Map(1) - lineP1(1)) * (P_to_Map(2) - lineP2(2)) - (P_to_Map(1) - lineP2(1)) * (P_to_Map(2) - lineP1(2))));
+		error = a012 / l12;
+		return error;
+	}
 	};
 
 	/** \brief point to plan feature */
@@ -88,14 +89,15 @@ public:
 			valid = false;
 			error = 0;
 		}
-		double ComputeError(const Eigen::Matrix4d& pose){
-			Eigen::Vector3d P_to_Map = pose.topLeftCorner(3,3) * pointOri + pose.topRightCorner(3,1);
-			error = pa * P_to_Map(0) + pb * P_to_Map(1) + pc * P_to_Map(2) + pd;
-		}
-	};
+	double ComputeError(const Eigen::Matrix4d& pose){
+		Eigen::Vector3d P_to_Map = pose.topLeftCorner(3,3) * pointOri + pose.topRightCorner(3,1);
+		error = pa * P_to_Map(0) + pb * P_to_Map(1) + pc * P_to_Map(2) + pd;
+		return error;
+	}
+};
 
-	/** \brief point to plan feature */
-	struct FeaturePlanVec{
+/** \brief point to plan feature */
+struct FeaturePlanVec{
 		Eigen::Vector3d pointOri;
 		Eigen::Vector3d pointProj;
 		Eigen::Matrix3d sqrt_info;
@@ -106,14 +108,15 @@ public:
 			valid = false;
 			error = 0;
 		}
-		double ComputeError(const Eigen::Matrix4d& pose){
-			Eigen::Vector3d P_to_Map = pose.topLeftCorner(3,3) * pointOri + pose.topRightCorner(3,1);
-			error = (P_to_Map - pointProj).norm();
-		}
-	};
+	double ComputeError(const Eigen::Matrix4d& pose){
+		Eigen::Vector3d P_to_Map = pose.topLeftCorner(3,3) * pointOri + pose.topRightCorner(3,1);
+		error = (P_to_Map - pointProj).norm();
+		return error;
+	}
+};
 
-	/** \brief non feature */
-	struct FeatureNon{
+/** \brief non feature */
+struct FeatureNon{
 		Eigen::Vector3d pointOri;
 		double pa;
 		double pb;
@@ -126,11 +129,12 @@ public:
 			valid = false;
 			error = 0;
 		}
-		double ComputeError(const Eigen::Matrix4d& pose){
-			Eigen::Vector3d P_to_Map = pose.topLeftCorner(3,3) * pointOri + pose.topRightCorner(3,1);
-			error = pa * P_to_Map(0) + pb * P_to_Map(1) + pc * P_to_Map(2) + pd;
-		}
-	};
+	double ComputeError(const Eigen::Matrix4d& pose){
+		Eigen::Vector3d P_to_Map = pose.topLeftCorner(3,3) * pointOri + pose.topRightCorner(3,1);
+		error = pa * P_to_Map(0) + pb * P_to_Map(1) + pc * P_to_Map(2) + pd;
+		return error;
+	}
+};
 
 public:
 	/** \brief constructor of Estimator

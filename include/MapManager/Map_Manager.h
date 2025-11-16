@@ -1,5 +1,6 @@
 #ifndef LIO_LIVOX_MAP_MANAGER_H
 #define LIO_LIVOX_MAP_MANAGER_H
+#include <ros/ros.h>
 #include <pcl/kdtree/kdtree_flann.h>
 #include <pcl/point_cloud.h>
 #include <pcl/point_types.h>

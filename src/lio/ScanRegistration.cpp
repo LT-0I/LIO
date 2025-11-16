@@ -19,6 +19,11 @@ bool Use_seg = false;
 
 void lidarCallBackHorizon(const livox_ros_driver::CustomMsgConstPtr &msg) {
 
+  if(!msg || msg->points.empty()) {
+    ROS_WARN("Received empty lidar message");
+    return;
+  }
+
   sensor_msgs::PointCloud2 msg2;
 
   if(Use_seg){
@@ -37,6 +42,11 @@ void lidarCallBackHorizon(const livox_ros_driver::CustomMsgConstPtr &msg) {
 }
 
 void lidarCallBackHAP(const livox_ros_driver::CustomMsgConstPtr &msg) {
+
+  if(!msg || msg->points.empty()) {
+    ROS_WARN("Received empty lidar message");
+    return;
+  }
 
   sensor_msgs::PointCloud2 msg2;
 

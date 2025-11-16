@@ -27,6 +27,7 @@ else()
   set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -march=native -O3")
 endif()
 
+set(CMAKE_PREFIX_PATH "/usr/local;${CMAKE_PREFIX_PATH}")
 set(Ceres_DIR "/usr/local/lib/cmake/Ceres") 
 #SET(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++0x")
 SET(CMAKE_MODULE_PATH ${PROJECT_SOURCE_DIR}/cmake)

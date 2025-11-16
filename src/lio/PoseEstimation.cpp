@@ -1,4 +1,5 @@
 #include "Estimator/Estimator.h"
+#include <ceres/sphere_manifold.h>
 typedef pcl::PointXYZINormal PointType;
 
 int WINDOWSIZE;
@@ -191,10 +192,10 @@ bool TryMAPInitialization() {
   para_quat[3] = 0;
 
 
-  ceres::LocalParameterization *quatParam = new ceres::QuaternionParameterization();
   ceres::Problem problem_quat;
   
-  problem_quat.AddParameterBlock(para_quat, 4, quatParam);
+  problem_quat.AddParameterBlock(para_quat, 4);
+  problem_quat.SetManifold(para_quat, new ceres::SphereManifold<4>);
 
   problem_quat.AddResidualBlock(Cost_Initial_G::Create(average_acc),
                                 nullptr,

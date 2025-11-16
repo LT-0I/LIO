@@ -388,6 +388,8 @@ void process(){
     lock_lidar.unlock();
 
     if(newfullCloud){
+      const ros::Time frame_start = ros::Time::now();
+      const size_t frame_points = laserCloudFullRes->size();
       
       // Check if point cloud is empty
       if(laserCloudFullRes->empty()) {
@@ -574,6 +576,9 @@ void process(){
 		    }
 	    }
       time_last_lidar = time_curr_lidar;
+      const double frame_ms = (ros::Time::now() - frame_start).toSec() * 1000.0;
+      ROS_INFO("PoseEstimation: frame %.3f processed %zu pts in %.2f ms",
+               time_curr_lidar, frame_points, frame_ms);
 
     }
   }

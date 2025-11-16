@@ -19,6 +19,8 @@ bool Use_seg = false;
 
 void lidarCallBackHorizon(const livox_ros_driver::CustomMsgConstPtr &msg) {
 
+  const ros::Time tic = ros::Time::now();
+
   if(!msg || msg->points.empty()) {
     ROS_WARN("Received empty lidar message");
     return;
@@ -39,9 +41,15 @@ void lidarCallBackHorizon(const livox_ros_driver::CustomMsgConstPtr &msg) {
   laserCloudMsg.header.stamp.fromNSec(msg->timebase+msg->points.back().offset_time);
   pubFullLaserCloud.publish(laserCloudMsg);
 
+  const double elapsed_ms = (ros::Time::now() - tic).toSec() * 1000.0;
+  ROS_INFO("ScanRegistration(Horizon): processed %zu pts in %.2f ms",
+           static_cast<size_t>(msg->points.size()), elapsed_ms);
+
 }
 
 void lidarCallBackHAP(const livox_ros_driver::CustomMsgConstPtr &msg) {
+
+  const ros::Time tic = ros::Time::now();
 
   if(!msg || msg->points.empty()) {
     ROS_WARN("Received empty lidar message");
@@ -63,9 +71,14 @@ void lidarCallBackHAP(const livox_ros_driver::CustomMsgConstPtr &msg) {
   laserCloudMsg.header.stamp.fromNSec(msg->timebase+msg->points.back().offset_time);
   pubFullLaserCloud.publish(laserCloudMsg);
 
+  const double elapsed_ms = (ros::Time::now() - tic).toSec() * 1000.0;
+  ROS_INFO("ScanRegistration(HAP): processed %zu pts in %.2f ms",
+           static_cast<size_t>(msg->points.size()), elapsed_ms);
+
 }
 
 void lidarCallBackPc2(const sensor_msgs::PointCloud2ConstPtr &msg) {
+    const ros::Time tic = ros::Time::now();
     pcl::PointCloud<pcl::PointXYZI>::Ptr laser_cloud(new pcl::PointCloud<pcl::PointXYZI>());
     pcl::PointCloud<pcl::PointXYZINormal>::Ptr laser_cloud_custom(new pcl::PointCloud<pcl::PointXYZINormal>());
 
@@ -98,6 +111,10 @@ void lidarCallBackPc2(const sensor_msgs::PointCloud2ConstPtr &msg) {
     pcl::toROSMsg(*laser_cloud_custom, laserCloudMsg);
     laserCloudMsg.header = msg->header;
     pubFullLaserCloud.publish(laserCloudMsg);
+
+    const double elapsed_ms = (ros::Time::now() - tic).toSec() * 1000.0;
+    ROS_INFO("ScanRegistration(PC2): processed %zu pts in %.2f ms",
+             static_cast<size_t>(laser_cloud_custom->points.size()), elapsed_ms);
 
 }
 

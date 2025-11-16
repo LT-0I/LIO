@@ -862,6 +862,7 @@ void Estimator::EstimateLidarPose(std::list<LidarFrame>& lidarFrameList,
                            const Eigen::Vector3d& gravity,
                            nav_msgs::Odometry& debugInfo){
   
+  const ros::Time tic = ros::Time::now();
   Eigen::Matrix3d exRbl = exTlb.topLeftCorner(3,3).transpose();
   Eigen::Vector3d exPbl = -1.0 * exRbl * exTlb.topRightCorner(3,1);
   Eigen::Matrix4d transformTobeMapped = Eigen::Matrix4d::Identity();
@@ -923,12 +924,20 @@ void Estimator::EstimateLidarPose(std::list<LidarFrame>& lidarFrameList,
   laserCloudNonFeatureFromLocal->clear();
   MapIncrementLocal(laserCloudCornerForMap,laserCloudSurfForMap,laserCloudNonFeatureForMap,transformTobeMapped);
   locker.unlock();
+
+  const double elapsed_ms = (ros::Time::now() - tic).toSec() * 1000.0;
+  ROS_INFO("Estimator::EstimateLidarPose: frames=%zu mapPts(corner=%d surf=%d) cost=%.2f ms",
+           lidarFrameList.size(),
+           laserCloudCornerFromMapNum,
+           laserCloudSurfFromMapNum,
+           elapsed_ms);
 }
 
 void Estimator::Estimate(std::list<LidarFrame>& lidarFrameList,
                          const Eigen::Matrix4d& exTlb,
                          const Eigen::Vector3d& gravity){
 
+  const ros::Time tic = ros::Time::now();
   int num_corner_map = 0;
   int num_surf_map = 0;
 
@@ -1343,6 +1352,9 @@ void Estimator::Estimate(std::list<LidarFrame>& lidarFrameList,
       }
     }
   }
+
+  const double elapsed_ms = (ros::Time::now() - tic).toSec() * 1000.0;
+  ROS_INFO("Estimator::Estimate: window=%d cost=%.2f ms", windowSize, elapsed_ms);
 
 }
 void Estimator::MapIncrementLocal(const pcl::PointCloud<PointType>::Ptr& laserCloudCornerStack,

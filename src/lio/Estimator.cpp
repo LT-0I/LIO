@@ -1,5 +1,15 @@
 #include "Estimator/Estimator.h"
 
+namespace {
+constexpr int kMinCornerMapPoints = 60;
+constexpr int kMinSurfMapPoints = 40;
+
+inline void LogDuration(const char* tag, const ros::Time& start_time) {
+  const double elapsed_ms = (ros::Time::now() - start_time).toSec() * 1000.0;
+  ROS_INFO("%s took %.3f ms", tag, elapsed_ms);
+}
+}
+
 Estimator::Estimator(const float& filter_corner, const float& filter_surf){
   laserCloudCornerFromLocal.reset(new pcl::PointCloud<PointType>);
   laserCloudSurfFromLocal.reset(new pcl::PointCloud<PointType>);
@@ -863,6 +873,7 @@ void Estimator::EstimateLidarPose(std::list<LidarFrame>& lidarFrameList,
                            nav_msgs::Odometry& debugInfo){
   
   const ros::Time tic = ros::Time::now();
+  ROS_INFO("Estimator::EstimateLidarPose START stamp %.3f", lidarFrameList.back().timeStamp);
   Eigen::Matrix3d exRbl = exTlb.topLeftCorner(3,3).transpose();
   Eigen::Vector3d exPbl = -1.0 * exRbl * exTlb.topRightCorner(3,1);
   Eigen::Matrix4d transformTobeMapped = Eigen::Matrix4d::Identity();
@@ -874,6 +885,7 @@ void Estimator::EstimateLidarPose(std::list<LidarFrame>& lidarFrameList,
   int laserCloudCornerFromLocalNum = laserCloudCornerFromLocal->points.size();
   int laserCloudSurfFromLocalNum = laserCloudSurfFromLocal->points.size();
   int stack_count = 0;
+  const ros::Time t_stack = ros::Time::now();
   for(const auto& l : lidarFrameList){
     laserCloudCornerLast[stack_count]->clear();
     for(const auto& p : l.laserCloud->points){
@@ -905,9 +917,12 @@ void Estimator::EstimateLidarPose(std::list<LidarFrame>& lidarFrameList,
     downSizeFilterNonFeature.filter(*laserCloudNonFeatureStack[stack_count]);
     stack_count++;
   }
+  LogDuration("Estimator::EstimateLidarPose::stack", t_stack);
   if ( ((laserCloudCornerFromMapNum >= 0 && laserCloudSurfFromMapNum > 100) || 
        (laserCloudCornerFromLocalNum >= 0 && laserCloudSurfFromLocalNum > 100))) {
+    const ros::Time t_est = ros::Time::now();
     Estimate(lidarFrameList, exTlb, gravity);
+    LogDuration("Estimator::EstimateLidarPose::Estimate", t_est);
   }
 
   transformTobeMapped = Eigen::Matrix4d::Identity();
@@ -922,7 +937,9 @@ void Estimator::EstimateLidarPose(std::list<LidarFrame>& lidarFrameList,
   laserCloudCornerFromLocal->clear();
   laserCloudSurfFromLocal->clear();
   laserCloudNonFeatureFromLocal->clear();
+  const ros::Time t_local = ros::Time::now();
   MapIncrementLocal(laserCloudCornerForMap,laserCloudSurfForMap,laserCloudNonFeatureForMap,transformTobeMapped);
+  LogDuration("Estimator::EstimateLidarPose::MapIncrementLocal", t_local);
   locker.unlock();
 
   const double elapsed_ms = (ros::Time::now() - tic).toSec() * 1000.0;
@@ -931,6 +948,7 @@ void Estimator::EstimateLidarPose(std::list<LidarFrame>& lidarFrameList,
            laserCloudCornerFromMapNum,
            laserCloudSurfFromMapNum,
            elapsed_ms);
+  LogDuration("Estimator::EstimateLidarPose TOTAL", tic);
 }
 
 void Estimator::Estimate(std::list<LidarFrame>& lidarFrameList,
@@ -938,11 +956,12 @@ void Estimator::Estimate(std::list<LidarFrame>& lidarFrameList,
                          const Eigen::Vector3d& gravity){
 
   const ros::Time tic = ros::Time::now();
+  const int windowSize = lidarFrameList.size();
+  ROS_INFO("Estimator::Estimate START window=%d", windowSize);
   int num_corner_map = 0;
   int num_surf_map = 0;
 
   static uint32_t frame_count = 0;
-  int windowSize = lidarFrameList.size();
   Eigen::Matrix4d transformTobeMapped = Eigen::Matrix4d::Identity();
   Eigen::Matrix3d exRbl = exTlb.topLeftCorner(3,3).transpose();
   Eigen::Vector3d exPbl = -1.0 * exRbl * exTlb.topRightCorner(3,1);
@@ -998,8 +1017,12 @@ void Estimator::Estimate(std::list<LidarFrame>& lidarFrameList,
   // excute optimize process
   const int max_iters = 5;
   for(int iterOpt=0; iterOpt<max_iters; ++iterOpt){
+    ROS_INFO("Estimator::Estimate iter %d begin", iterOpt);
+    const ros::Time t_iter = ros::Time::now();
+    const ros::Time t_vec = ros::Time::now();
 
     vector2double(lidarFrameList);
+    LogDuration("Estimator::Estimate::vector2double", t_vec);
 
     //create huber loss function
     ceres::LossFunction* loss_function = NULL;
@@ -1010,6 +1033,7 @@ void Estimator::Estimate(std::list<LidarFrame>& lidarFrameList,
       loss_function = new ceres::HuberLoss(0.1 / IMUIntegrator::lidar_m);
     }
 
+    const ros::Time t_problem = ros::Time::now();
     ceres::Problem::Options problem_options;
     ceres::Problem problem(problem_options);
 
@@ -1042,6 +1066,7 @@ void Estimator::Estimate(std::list<LidarFrame>& lidarFrameList,
       problem.AddResidualBlock(marginalization_factor, nullptr,
                                last_marginalization_parameter_blocks);
     }
+    LogDuration("Estimator::Estimate::setupProblem", t_problem);
 
     Eigen::Quaterniond q_before_opti = lidarFrameList.back().Q;
     Eigen::Vector3d t_before_opti = lidarFrameList.back().P;
@@ -1050,6 +1075,7 @@ void Estimator::Estimate(std::list<LidarFrame>& lidarFrameList,
     std::vector<std::vector<ceres::CostFunction *>> edgesPlan(windowSize);
     std::vector<std::vector<ceres::CostFunction *>> edgesNon(windowSize);
     std::thread threads[3];
+    const ros::Time t_features = ros::Time::now();
     for(int f=0; f<windowSize; ++f) {
       auto frame_curr = lidarFrameList.begin();
       std::advance(frame_curr, f);
@@ -1088,10 +1114,12 @@ void Estimator::Estimate(std::list<LidarFrame>& lidarFrameList,
       threads[1].join();
       threads[2].join();
     }
+    LogDuration("Estimator::Estimate::buildFeatures", t_features);
 
     int cntSurf = 0;
     int cntCorner = 0;
     int cntNon = 0;
+    const ros::Time t_residuals = ros::Time::now();
     if(windowSize == SLIDEWINDOWSIZE) {
       thres_dist = 1.0;
       if(iterOpt == 0){
@@ -1204,7 +1232,9 @@ void Estimator::Estimate(std::list<LidarFrame>& lidarFrameList,
           }
         }
     }
+    LogDuration("Estimator::Estimate::addResiduals", t_residuals);
 
+    const ros::Time t_solve = ros::Time::now();
     ceres::Solver::Options options;
     options.linear_solver_type = ceres::DENSE_SCHUR;
     options.trust_region_strategy_type = ceres::DOGLEG;
@@ -1213,8 +1243,11 @@ void Estimator::Estimate(std::list<LidarFrame>& lidarFrameList,
     options.num_threads = 6;
     ceres::Solver::Summary summary;
     ceres::Solve(options, &problem, &summary);
+    LogDuration("Estimator::Estimate::ceresSolve", t_solve);
 
+    const ros::Time t_double2 = ros::Time::now();
     double2vector(lidarFrameList);
+    LogDuration("Estimator::Estimate::double2vector", t_double2);
 
     Eigen::Quaterniond q_after_opti = lidarFrameList.back().Q;
     Eigen::Vector3d t_after_opti = lidarFrameList.back().P;
@@ -1351,6 +1384,8 @@ void Estimator::Estimate(std::list<LidarFrame>& lidarFrameList,
         vNonFeatures[f].clear();
       }
     }
+    LogDuration("Estimator::Estimate::iterTotal", t_iter);
+    ROS_INFO("Estimator::Estimate iter %d end", iterOpt);
   }
 
   const double elapsed_ms = (ros::Time::now() - tic).toSec() * 1000.0;
@@ -1361,6 +1396,7 @@ void Estimator::MapIncrementLocal(const pcl::PointCloud<PointType>::Ptr& laserCl
                                   const pcl::PointCloud<PointType>::Ptr& laserCloudSurfStack,
                                   const pcl::PointCloud<PointType>::Ptr& laserCloudNonFeatureStack,
                                   const Eigen::Matrix4d& transformTobeMapped){
+  const ros::Time t_local_total = ros::Time::now();
   int laserCloudCornerStackNum = laserCloudCornerStack->points.size();
   int laserCloudSurfStackNum = laserCloudSurfStack->points.size();
   int laserCloudNonFeatureStackNum = laserCloudNonFeatureStack->points.size();
@@ -1370,6 +1406,7 @@ void Estimator::MapIncrementLocal(const pcl::PointCloud<PointType>::Ptr& laserCl
   localCornerMap[Id]->clear();
   localSurfMap[Id]->clear();
   localNonFeatureMap[Id]->clear();
+  const ros::Time t_assoc = ros::Time::now();
   for (int i = 0; i < laserCloudCornerStackNum; i++) {
     MAP_MANAGER::pointAssociateToMap(&laserCloudCornerStack->points[i], &pointSel, transformTobeMapped);
     localCornerMap[Id]->push_back(pointSel);
@@ -1382,12 +1419,15 @@ void Estimator::MapIncrementLocal(const pcl::PointCloud<PointType>::Ptr& laserCl
     MAP_MANAGER::pointAssociateToMap(&laserCloudNonFeatureStack->points[i], &pointSel2, transformTobeMapped);
     localNonFeatureMap[Id]->push_back(pointSel2);
   }
-
+  LogDuration("MapIncrementLocal::associate", t_assoc);
+  const ros::Time t_accumulate = ros::Time::now();
   for (int i = 0; i < localMapWindowSize; i++) {
     *laserCloudCornerFromLocal += *localCornerMap[i];
     *laserCloudSurfFromLocal += *localSurfMap[i];
     *laserCloudNonFeatureFromLocal += *localNonFeatureMap[i];
   }
+  LogDuration("MapIncrementLocal::accumulate", t_accumulate);
+  const ros::Time t_downsample = ros::Time::now();
   pcl::PointCloud<PointType>::Ptr temp(new pcl::PointCloud<PointType>());
   downSizeFilterCorner.setInputCloud(laserCloudCornerFromLocal);
   downSizeFilterCorner.filter(*temp);
@@ -1401,4 +1441,6 @@ void Estimator::MapIncrementLocal(const pcl::PointCloud<PointType>::Ptr& laserCl
   downSizeFilterNonFeature.filter(*temp3);
   laserCloudNonFeatureFromLocal = temp3;
   localMapID ++;
+  LogDuration("MapIncrementLocal::downsample", t_downsample);
+  LogDuration("MapIncrementLocal TOTAL", t_local_total);
 }

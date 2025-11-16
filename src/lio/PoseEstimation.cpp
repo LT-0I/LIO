@@ -367,6 +367,14 @@ bool TryMAPInitialization() {
 /** \brief Mapping main thread
   */
 void process(){
+  auto logDuration = [](const char* tag, const ros::Time& start) {
+    const double elapsed = (ros::Time::now() - start).toSec() * 1000.0;
+    ROS_INFO("%s took %.3f ms", tag, elapsed);
+  };
+  auto logTimestamp = [](const char* tag, double stamp) {
+    ROS_INFO("%s timestamp %.3f", tag, stamp);
+  };
+
   double time_last_lidar = -1;
   double time_curr_lidar = -1;
   Eigen::Matrix3d delta_Rl = Eigen::Matrix3d::Identity();
@@ -389,6 +397,7 @@ void process(){
 
     if(newfullCloud){
       const ros::Time frame_start = ros::Time::now();
+      logTimestamp("FrameStart", time_curr_lidar);
       const size_t frame_points = laserCloudFullRes->size();
       
       // Check if point cloud is empty
@@ -404,6 +413,7 @@ void process(){
       debugInfo.pose.pose.position.z = 0;
       if(IMU_Mode > 0 && time_last_lidar > 0){
         // get IMU msg int the Specified time interval
+        const ros::Time t_fetch_imu = ros::Time::now();
         vimuMsg.clear();
         int countFail = 0;
         while (!fetchImuMsgs(time_last_lidar, time_curr_lidar, vimuMsg)) {
@@ -413,6 +423,7 @@ void process(){
           }
           std::this_thread::sleep_for( std::chrono::milliseconds( 10 ) );
         }
+        logDuration("fetchImuMsgs", t_fetch_imu);
       }
       // this lidar frame init
       Estimator::LidarFrame lidarFrame;
@@ -421,6 +432,7 @@ void process(){
 
 	    boost::shared_ptr<std::list<Estimator::LidarFrame>> lidar_list;
 	    if(!vimuMsg.empty()){
+        const ros::Time t_imu = ros::Time::now();
 	    	if(!LidarIMUInited) {
 	    		// if get IMU msg successfully, use gyro integration to update delta_Rl
 			    lidarFrame.imuIntegrator.PushIMUMsg(vimuMsg);
@@ -471,6 +483,7 @@ void process(){
 			    lidarFrameList->pop_front();
 			    lidar_list = lidarFrameList;
 	    	}
+        logDuration("IMUIntegration", t_imu);
 	    }else{
 	    	if(LidarIMUInited)
 	    	  break;
@@ -487,10 +500,14 @@ void process(){
 	    }
 
 	    // remove lidar distortion
+      const ros::Time t_undistort = ros::Time::now();
 	    RemoveLidarDistortion(laserCloudFullRes, delta_Rl, delta_tl);
+      logDuration("RemoveLidarDistortion", t_undistort);
 
       // optimize current lidar pose with IMU
+      const ros::Time t_est = ros::Time::now();
       estimator->EstimateLidarPose(*lidar_list, exTlb, GravityVector, debugInfo);
+      logDuration("EstimateLidarPose", t_est);
 
       pcl::PointCloud<PointType>::Ptr laserCloudCornerMap(new pcl::PointCloud<PointType>());
       pcl::PointCloud<PointType>::Ptr laserCloudSurfMap(new pcl::PointCloud<PointType>());
@@ -513,6 +530,7 @@ void process(){
 	    pubOdometry(transformTobeMapped, lidar_list->front().timeStamp);
 
       // publish lidar points (with downsampling for rviz performance)
+      const ros::Time t_publish = ros::Time::now();
       int laserCloudFullResNum = lidar_list->front().laserCloud->points.size();
       pcl::PointCloud<PointType>::Ptr laserCloudAfterEstimate(new pcl::PointCloud<PointType>());
       laserCloudAfterEstimate->reserve(laserCloudFullResNum);
@@ -529,9 +547,11 @@ void process(){
       laserCloudMsg.header.frame_id = "world";
       laserCloudMsg.header.stamp.fromSec(lidar_list->front().timeStamp);
       pubFullLaserCloud.publish(laserCloudMsg);
+      logDuration("PublishMappedCloud", t_publish);
 
 	    // if tightly coupled IMU message, start IMU initialization
 	    if(IMU_Mode > 1 && !LidarIMUInited){
+        const ros::Time t_init = ros::Time::now();
 		    // update lidar frame pose
 		    lidarFrame.P = transformTobeMapped.topRightCorner(3,1);
 		    Eigen::Matrix3d m3d = transformTobeMapped.topLeftCorner(3,3);
@@ -574,6 +594,7 @@ void process(){
 			    }
 
 		    }
+        logDuration("IMUInitUpdate", t_init);
 	    }
       time_last_lidar = time_curr_lidar;
       const double frame_ms = (ros::Time::now() - frame_start).toSec() * 1000.0;

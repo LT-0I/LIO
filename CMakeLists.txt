@@ -27,7 +27,8 @@ else()
   set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -march=native -O3")
 endif()
 
-set(CMAKE_PREFIX_PATH "/usr/local;${CMAKE_PREFIX_PATH}")
+list(PREPEND CMAKE_PREFIX_PATH "/usr/local" "/usr/local/share/eigen3/cmake")
+set(Eigen3_DIR "/usr/local/share/eigen3/cmake")
 set(Ceres_DIR "/usr/local/lib/cmake/Ceres") 
 #SET(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++0x")
 SET(CMAKE_MODULE_PATH ${PROJECT_SOURCE_DIR}/cmake)
@@ -50,15 +51,17 @@ find_package(catkin REQUIRED COMPONENTS
   	     message_filters
   	     std_srvs)
 
-find_package(Eigen3 REQUIRED)
+find_package(Eigen3 3.4 REQUIRED NO_MODULE)
+set(EIGEN3_INCLUDE_DIR "/usr/local/include/eigen3")
 find_package(PCL REQUIRED)
 find_package(Ceres REQUIRED)
 find_package(OpenCV 4.2.0 REQUIRED)
 find_package(SuiteSparse REQUIRED)
 
-include_directories(include
-        	    ${catkin_INCLUDE_DIRS}
+include_directories(BEFORE
 		    ${EIGEN3_INCLUDE_DIR}
+                    include
+        	    ${catkin_INCLUDE_DIRS}
 		    ${PCL_INCLUDE_DIRS}
         	    ${CERES_INCLUDE_DIRS}
 		    ${OpenCV_INCLUDE_DIRS}

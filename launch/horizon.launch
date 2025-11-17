@@ -1,11 +1,11 @@
 <launch>
 
-    <node pkg="lio_livox" type="ScanRegistration" name="ScanRegistration" output="screen">
+    <node pkg="lio_livox" type="ScanRegistration" name="ScanRegistration" output="screen" >
 
         <param name="config_file" value="$(find lio_livox)/config/horizon_config.yaml"/>
     </node>
 
-    <node pkg="lio_livox" type="PoseEstimation" name="PoseEstimation" output="screen">
+    <node pkg="lio_livox" type="PoseEstimation" name="PoseEstimation" output="screen" >
         <!-- 0-Not Use IMU, 1-Use IMU remove Rotation Distort, 2-Tightly Coupled IMU -->
         <param name="IMU_Mode" type="int" value="2" />
         <!-- Voxel Filter Size Use to Downsize Map Cloud -->

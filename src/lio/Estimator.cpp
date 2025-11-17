@@ -382,9 +382,12 @@ void Estimator::processPointToPlan(std::vector<ceres::CostFunction *>& edges,
         float pa = _matX0(0, 0);
         float pb = _matX0(1, 0);
         float pc = _matX0(2, 0);
-        float pd = 1;
+        float pd = 1.0f;
 
         float ps = std::sqrt(pa * pa + pb * pb + pc * pc);
+        if (!std::isfinite(ps) || ps < 1e-6f) {
+          continue;
+        }
         pa /= ps;
         pb /= ps;
         pc /= ps;
@@ -542,9 +545,12 @@ void Estimator::processPointToPlanVec(std::vector<ceres::CostFunction *>& edges,
         float pa = _matX0(0, 0);
         float pb = _matX0(1, 0);
         float pc = _matX0(2, 0);
-        float pd = 1;
+        float pd = 1.0f;
 
         float ps = std::sqrt(pa * pa + pb * pb + pc * pc);
+        if (!std::isfinite(ps) || ps < 1e-6f) {
+          continue;
+        }
         pa /= ps;
         pb /= ps;
         pc /= ps;
@@ -925,6 +931,13 @@ void Estimator::Estimate(std::list<LidarFrame>& lidarFrameList,
   Eigen::Matrix4d transformTobeMapped = Eigen::Matrix4d::Identity();
   Eigen::Matrix3d exRbl = exTlb.topLeftCorner(3,3).transpose();
   Eigen::Vector3d exPbl = -1.0 * exRbl * exTlb.topRightCorner(3,1);
+
+  if(laserCloudCornerFromLocal->empty() || laserCloudSurfFromLocal->empty()){
+    ROS_WARN_STREAM_THROTTLE(1.0, "[Estimator] Skip optimization: corner=" <<
+      laserCloudCornerFromLocal->size() << ", surf=" << laserCloudSurfFromLocal->size());
+    return;
+  }
+
   kdtreeCornerFromLocal->setInputCloud(laserCloudCornerFromLocal);
   kdtreeSurfFromLocal->setInputCloud(laserCloudSurfFromLocal);
   kdtreeNonFeatureFromLocal->setInputCloud(laserCloudNonFeatureFromLocal);

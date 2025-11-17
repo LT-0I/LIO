@@ -70,7 +70,12 @@ public:
 								* ((P_to_Map(0) - lineP1(0)) * (P_to_Map(2) - lineP2(2)) - (P_to_Map(0) - lineP2(0)) * (P_to_Map(2) - lineP1(2)))
 							+ ((P_to_Map(1) - lineP1(1)) * (P_to_Map(2) - lineP2(2)) - (P_to_Map(1) - lineP2(1)) * (P_to_Map(2) - lineP1(2)))
 								* ((P_to_Map(1) - lineP1(1)) * (P_to_Map(2) - lineP2(2)) - (P_to_Map(1) - lineP2(1)) * (P_to_Map(2) - lineP1(2))));
-			error = a012 / l12;
+			if (std::isfinite(l12) && l12 > 1e-6) {
+				error = a012 / l12;
+				return error;
+			}
+			error = 0.0;
+			return error;
 		}
 	};
 
@@ -91,6 +96,7 @@ public:
 		double ComputeError(const Eigen::Matrix4d& pose){
 			Eigen::Vector3d P_to_Map = pose.topLeftCorner(3,3) * pointOri + pose.topRightCorner(3,1);
 			error = pa * P_to_Map(0) + pb * P_to_Map(1) + pc * P_to_Map(2) + pd;
+			return error;
 		}
 	};
 
@@ -109,6 +115,7 @@ public:
 		double ComputeError(const Eigen::Matrix4d& pose){
 			Eigen::Vector3d P_to_Map = pose.topLeftCorner(3,3) * pointOri + pose.topRightCorner(3,1);
 			error = (P_to_Map - pointProj).norm();
+			return error;
 		}
 	};
 
@@ -129,6 +136,7 @@ public:
 		double ComputeError(const Eigen::Matrix4d& pose){
 			Eigen::Vector3d P_to_Map = pose.topLeftCorner(3,3) * pointOri + pose.topRightCorner(3,1);
 			error = pa * P_to_Map(0) + pb * P_to_Map(1) + pc * P_to_Map(2) + pd;
+			return error;
 		}
 	};
 

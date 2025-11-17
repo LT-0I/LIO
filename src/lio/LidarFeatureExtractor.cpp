@@ -609,10 +609,10 @@ void LidarFeatureExtractor::FeatureExtract_with_segment(const livox_ros_driver::
   }
 
   int dnum = msg->points.size();
-
-  int *idtrans = (int*)calloc(dnum, sizeof(int));
-  float *data=(float*)calloc(dnum*4,sizeof(float));
-  int point_num = 0;
+  std::vector<int> seg_labels;
+  std::vector<float> seg_data;
+  seg_labels.reserve(dnum);
+  seg_data.reserve(dnum * 4);
 
   double timeSpan = ros::Time().fromNSec(msg->points.back().offset_time).toSec();
   PointType point;
@@ -634,17 +634,23 @@ void LidarFeatureExtractor::FeatureExtract_with_segment(const livox_ros_driver::
     point.normal_y = _int_as_float(line_num);
     laserCloud->push_back(point);
 
-    data[point_num*4+0] = point.x;
-    data[point_num*4+1] = point.y;
-    data[point_num*4+2] = point.z;
-    data[point_num*4+3] = point.intensity;
-
-
-    point_num++;
+    seg_data.push_back(point.x);
+    seg_data.push_back(point.y);
+    seg_data.push_back(point.z);
+    seg_data.push_back(point.intensity);
+    seg_labels.emplace_back(-1);
   }
 
   PCSeg pcseg;
-  pcseg.DoSeg(idtrans,data,dnum);
+  if(!seg_labels.empty()){
+    try{
+      pcseg.DoSeg(seg_labels.data(), seg_data.data(), static_cast<int>(seg_labels.size()));
+    }catch(const std::exception& e){
+      ROS_ERROR_STREAM("[ScanRegistration] PCSeg::DoSeg failed (points=" << seg_labels.size()
+                       << ", raw=" << dnum << "): " << e.what());
+      throw;
+    }
+  }
 
   std::size_t cloud_num = laserCloud->size();
   for(std::size_t i=0; i<cloud_num; ++i){
@@ -672,11 +678,12 @@ void LidarFeatureExtractor::FeatureExtract_with_segment(const livox_ros_driver::
 
   detectFeaturePoint2(laserCloud, laserSurfFeature, laserNonFeature);
 
+  const std::size_t label_size = seg_labels.size();
   for(std::size_t i=0; i<cloud_num; ++i){
     float dis = laserCloud->points[i].x * laserCloud->points[i].x
                 + laserCloud->points[i].y * laserCloud->points[i].y
                 + laserCloud->points[i].z * laserCloud->points[i].z;
-    if( idtrans[i] > 9 && dis < 50*50){
+    if( label_size > i && seg_labels[i] > 9 && dis < 50*50){
       laserCloud->points[i].normal_z = 0;
     }
   }
@@ -724,9 +731,10 @@ void LidarFeatureExtractor::FeatureExtract_with_segment_hap(const livox_ros_driv
 
   int dnum = msg->points.size();
 
-  int *idtrans = (int*)calloc(dnum, sizeof(int));
-  float *data=(float*)calloc(dnum*4,sizeof(float));
-  int point_num = 0;
+  std::vector<int> seg_labels;
+  std::vector<float> seg_data;
+  seg_labels.reserve(dnum);
+  seg_data.reserve(dnum * 4);
 
   double timeSpan = ros::Time().fromNSec(msg->points.back().offset_time).toSec();
   PointType point;
@@ -748,27 +756,34 @@ void LidarFeatureExtractor::FeatureExtract_with_segment_hap(const livox_ros_driv
     point.normal_y = _int_as_float(line_num);
     laserCloud->push_back(point);
 
-    data[point_num*4+0] = point.x;
-    data[point_num*4+1] = point.y;
-    data[point_num*4+2] = point.z;
-    data[point_num*4+3] = point.intensity;
-
-
-    point_num++;
+    seg_data.push_back(point.x);
+    seg_data.push_back(point.y);
+    seg_data.push_back(point.z);
+    seg_data.push_back(point.intensity);
+    seg_labels.emplace_back(-1);
   }
 
   PCSeg pcseg;
-  pcseg.DoSeg(idtrans,data,dnum);
+  if(!seg_labels.empty()){
+    try{
+      pcseg.DoSeg(seg_labels.data(), seg_data.data(), static_cast<int>(seg_labels.size()));
+    }catch(const std::exception& e){
+      ROS_ERROR_STREAM("[ScanRegistration] PCSeg::DoSeg HAP failed (points=" << seg_labels.size()
+                       << ", raw=" << dnum << "): " << e.what());
+      throw;
+    }
+  }
 
   std::size_t cloud_num = laserCloud->size();
 
   detectFeaturePoint2(laserCloud, laserSurfFeature, laserNonFeature);
 
+  const std::size_t label_size = seg_labels.size();
   for(std::size_t i=0; i<cloud_num; ++i){
     float dis = laserCloud->points[i].x * laserCloud->points[i].x
                 + laserCloud->points[i].y * laserCloud->points[i].y
                 + laserCloud->points[i].z * laserCloud->points[i].z;
-    if( idtrans[i] > 9 && dis < 50*50){
+    if( label_size > i && seg_labels[i] > 9 && dis < 50*50){
       laserCloud->points[i].normal_z = 0;
     }
   }

@@ -45,7 +45,7 @@ void pubOdometry(const Eigen::Matrix4d& newPose, double& timefullCloud){
   Eigen::Matrix3d Rcurr = newPose.topLeftCorner(3, 3);
   Eigen::Quaterniond newQuat(Rcurr);
   Eigen::Vector3d newPosition = newPose.topRightCorner(3, 1);
-  laserOdometry.header.frame_id = "/world";
+  laserOdometry.header.frame_id = "world";
   laserOdometry.child_frame_id = "/livox_frame";
   laserOdometry.header.stamp = ros::Time().fromSec(timefullCloud);
   laserOdometry.pose.pose.orientation.x = newQuat.x();
@@ -62,10 +62,10 @@ void pubOdometry(const Eigen::Matrix4d& newPose, double& timefullCloud){
   laserPose.pose = laserOdometry.pose.pose;
   laserOdoPath.header.stamp = laserOdometry.header.stamp;
   laserOdoPath.poses.push_back(laserPose);
-  laserOdoPath.header.frame_id = "/world";
+  laserOdoPath.header.frame_id = "world";
   pubLaserOdometryPath.publish(laserOdoPath);
 
-  laserOdometryTrans.frame_id_ = "/world";
+  laserOdometryTrans.frame_id_ = "world";
   laserOdometryTrans.child_frame_id_ = "/livox_frame";
   laserOdometryTrans.stamp_ = ros::Time().fromSec(timefullCloud);
   laserOdometryTrans.setRotation(tf::Quaternion(newQuat.x(), newQuat.y(), newQuat.z(), newQuat.w()));
@@ -510,7 +510,7 @@ void process(){
       }
       sensor_msgs::PointCloud2 laserCloudMsg;
       pcl::toROSMsg(*laserCloudAfterEstimate, laserCloudMsg);
-      laserCloudMsg.header.frame_id = "/world";
+      laserCloudMsg.header.frame_id = "world";
       laserCloudMsg.header.stamp.fromSec(lidar_list->front().timeStamp);
       pubFullLaserCloud.publish(laserCloudMsg);
 

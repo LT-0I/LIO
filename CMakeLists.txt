@@ -2,11 +2,13 @@ cmake_minimum_required(VERSION 2.8.3)
 project(lio_livox)
 
 SET(CMAKE_BUILD_TYPE "Release")
-set(CMAKE_CXX_FLAGS "-std=c++11")
-
+#set(CMAKE_CXX_FLAGS "-std=c++11")
+set(CMAKE_CXX_STANDARD 14)
+set(Ceres_DIR "/usr/local/lib/cmake/Ceres") 
 #SET(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++0x")
 SET(CMAKE_MODULE_PATH ${PROJECT_SOURCE_DIR}/cmake)
-
+set(OpenCV_DIR "/usr/local/lib/cmake/opencv4")
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
 find_package(catkin REQUIRED COMPONENTS
   	     message_generation
   	     geometry_msgs
@@ -28,7 +30,7 @@ find_package(catkin REQUIRED COMPONENTS
 find_package(Eigen3 REQUIRED)
 find_package(PCL REQUIRED)
 find_package(Ceres REQUIRED)
-find_package(OpenCV REQUIRED)
+find_package(OpenCV 4.2.0 REQUIRED)
 find_package(SuiteSparse REQUIRED)
 
 include_directories(include
@@ -63,6 +65,3 @@ add_executable (PoseEstimation
 		src/lio/ceresfunc.cpp 
 		src/lio/Map_Manager.cpp)
 target_link_libraries(PoseEstimation ${catkin_LIBRARIES} ${PCL_LIBRARIES} ${CERES_LIBRARIES})
-
-
-

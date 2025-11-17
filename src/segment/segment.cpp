@@ -89,6 +89,10 @@ int PCSeg::DoSeg(int *pLabel1, float* fPoints1, int pointNum)
     int gnum=GndSeg(pLabelGnd,fPoints2,pntNum,1.0);
 
     // 5 地上分割
+    if(gnum > pntNum){
+        // clamp impossible case to avoid negative allocations
+        gnum = pntNum;
+    }
     int agnum = pntNum-gnum;
     float *fPoints3=(float*)calloc(agnum*4,sizeof(float));
     int *idtrans3=(int*)calloc(agnum,sizeof(int));
@@ -164,6 +168,8 @@ int PCSeg::DoSeg(int *pLabel1, float* fPoints1, int pointNum)
 
 
     free(pLabel2);
+
+    return 0;
 }
 
 int PCSeg::GetMainVectors(float*fPoints, int* pLabel, int pointNum)
@@ -275,6 +281,7 @@ int PCSeg::EncodeFeatures(float *pFeas)
     }
 
 
+    return 0;
 }
 int FilterGndForPos(float* outPoints,float*inPoints,int inNum)
 {
@@ -1056,6 +1063,8 @@ int FreeSeg(float *fPoints,int *pLabel,int pointNum)
     }
     if (pFreeDis != NULL)
         free(pFreeDis);
+
+    return 0;
 }
 
 

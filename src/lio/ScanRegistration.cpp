@@ -19,7 +19,6 @@ bool Use_seg = false;
 
 void lidarCallBackHorizon(const livox_ros_driver::CustomMsgConstPtr &msg) {
 
-  ROS_INFO("LiDAR points stage start %.6f", ros::Time::now().toSec());
   sensor_msgs::PointCloud2 msg2;
 
   if(Use_seg){
@@ -35,12 +34,10 @@ void lidarCallBackHorizon(const livox_ros_driver::CustomMsgConstPtr &msg) {
   laserCloudMsg.header.stamp.fromNSec(msg->timebase+msg->points.back().offset_time);
   pubFullLaserCloud.publish(laserCloudMsg);
 
-  ROS_INFO("LiDAR points stage end %.6f", ros::Time::now().toSec());
 }
 
 void lidarCallBackHAP(const livox_ros_driver::CustomMsgConstPtr &msg) {
 
-  ROS_INFO("LiDAR points stage start %.6f", ros::Time::now().toSec());
   sensor_msgs::PointCloud2 msg2;
 
   if(Use_seg){
@@ -56,11 +53,9 @@ void lidarCallBackHAP(const livox_ros_driver::CustomMsgConstPtr &msg) {
   laserCloudMsg.header.stamp.fromNSec(msg->timebase+msg->points.back().offset_time);
   pubFullLaserCloud.publish(laserCloudMsg);
 
-  ROS_INFO("LiDAR points stage end %.6f", ros::Time::now().toSec());
 }
 
 void lidarCallBackPc2(const sensor_msgs::PointCloud2ConstPtr &msg) {
-    ROS_INFO("LiDAR points stage start %.6f", ros::Time::now().toSec());
     pcl::PointCloud<pcl::PointXYZI>::Ptr laser_cloud(new pcl::PointCloud<pcl::PointXYZI>());
     pcl::PointCloud<pcl::PointXYZINormal>::Ptr laser_cloud_custom(new pcl::PointCloud<pcl::PointXYZINormal>());
 
@@ -94,7 +89,6 @@ void lidarCallBackPc2(const sensor_msgs::PointCloud2ConstPtr &msg) {
     laserCloudMsg.header = msg->header;
     pubFullLaserCloud.publish(laserCloudMsg);
 
-    ROS_INFO("LiDAR points stage end %.6f", ros::Time::now().toSec());
 }
 
 int main(int argc, char** argv)

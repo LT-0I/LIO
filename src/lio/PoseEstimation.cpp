@@ -426,9 +426,7 @@ void process(){
 		    }else{
 			    // if get IMU msg successfully, use pre-integration to update delta lidar pose
 			    lidarFrame.imuIntegrator.PushIMUMsg(vimuMsg);
-			    ROS_INFO("IMU preintegration start %.6f", ros::Time::now().toSec());
 			    lidarFrame.imuIntegrator.PreIntegration(lidarFrameList->back().timeStamp, lidarFrameList->back().bg, lidarFrameList->back().ba);
-			    ROS_INFO("IMU preintegration end %.6f", ros::Time::now().toSec());
 
 			    const Eigen::Vector3d& Pwbpre = lidarFrameList->back().P;
 			    const Eigen::Quaterniond& Qwbpre = lidarFrameList->back().Q;
@@ -475,9 +473,7 @@ void process(){
 	    	}
 	    }
 
-	    ROS_INFO("Remove distortion start %.6f", ros::Time::now().toSec());
 	    RemoveLidarDistortion(laserCloudFullRes, delta_Rl, delta_tl);
-	    ROS_INFO("Remove distortion end %.6f", ros::Time::now().toSec());
 
       // optimize current lidar pose with IMU
       estimator->EstimateLidarPose(*lidar_list, exTlb, GravityVector, debugInfo);
@@ -543,9 +539,7 @@ void process(){
 			    if(lidarFrameList->size() > 1){
 				    auto iterRight = std::prev(lidarFrameList->end());
 				    auto iterLeft = std::prev(std::prev(lidarFrameList->end()));
-				    ROS_INFO("IMU preintegration start %.6f", ros::Time::now().toSec());
 				    iterRight->imuIntegrator.PreIntegration(iterLeft->timeStamp, iterLeft->bg, iterLeft->ba);
-				    ROS_INFO("IMU preintegration end %.6f", ros::Time::now().toSec());
 			    }
 
           if (lidarFrameList->size() == int(WINDOWSIZE / 1.5)) {
@@ -553,13 +547,11 @@ void process(){
 			    }
 
 			    if (!LidarIMUInited && lidarFrameList->size() == WINDOWSIZE && lidarFrameList->front().timeStamp >= startTime){
-            ROS_INFO("IMU initialization start %.6f", ros::Time::now().toSec());
 				    if(TryMAPInitialization()){
               LidarIMUInited = true;
 					    pushCount = 0;
               startTime = 0;
 				    }
-            ROS_INFO("IMU initialization end %.6f", ros::Time::now().toSec());
 			    }
 
 		    }

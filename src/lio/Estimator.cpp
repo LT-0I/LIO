@@ -943,6 +943,7 @@ void Estimator::Estimate(std::list<LidarFrame>& lidarFrameList,
   kdtreeSurfFromLocal->setInputCloud(laserCloudSurfFromLocal);
   kdtreeNonFeatureFromLocal->setInputCloud(laserCloudNonFeatureFromLocal);
 
+  ROS_INFO("Estimator map data fetch start %.6f", ros::Time::now().toSec());
   std::unique_lock<std::mutex> locker3(map_manager->mtx_MapManager);
   for(int i = 0; i < 4851; i++){
     CornerKdMap[i] = map_manager->getCornerKdMap(i);
@@ -958,6 +959,7 @@ void Estimator::Estimate(std::list<LidarFrame>& lidarFrameList,
   laserCenDepth_last = map_manager->get_laserCloudCenDepth_last();
 
   locker3.unlock();
+  ROS_INFO("Estimator map data fetch end %.6f", ros::Time::now().toSec());
 
   // store point to line features
   std::vector<std::vector<FeatureLine>> vLineFeatures(windowSize);
@@ -976,6 +978,10 @@ void Estimator::Estimate(std::list<LidarFrame>& lidarFrameList,
     v.reserve(2000);
   }
 
+  std::vector<std::vector<ceres::CostFunction *>> edgesLine(windowSize);
+  std::vector<std::vector<ceres::CostFunction *>> edgesPlan(windowSize);
+  std::vector<std::vector<ceres::CostFunction *>> edgesNon(windowSize);
+
   if(windowSize == SLIDEWINDOWSIZE) {
     plan_weight_tan = 0.0003;
     thres_dist = 1.0;
@@ -989,6 +995,52 @@ void Estimator::Estimate(std::list<LidarFrame>& lidarFrameList,
   for(int iterOpt=0; iterOpt<max_iters; ++iterOpt){
 
     vector2double(lidarFrameList);
+
+    std::vector<std::vector<ceres::CostFunction *>> edgesLine(windowSize);
+    std::vector<std::vector<ceres::CostFunction *>> edgesPlan(windowSize);
+    std::vector<std::vector<ceres::CostFunction *>> edgesNon(windowSize);
+
+    ROS_INFO("Estimator residual construction start %.6f", ros::Time::now().toSec());
+    std::thread threads[3];
+    for(int f=0; f<windowSize; ++f) {
+      auto frame_curr = lidarFrameList.begin();
+      std::advance(frame_curr, f);
+      transformTobeMapped = Eigen::Matrix4d::Identity();
+      transformTobeMapped.topLeftCorner(3,3) = frame_curr->Q * exRbl;
+      transformTobeMapped.topRightCorner(3,1) = frame_curr->Q * exPbl + frame_curr->P;
+
+      threads[0] = std::thread(&Estimator::processPointToLine, this,
+                               std::ref(edgesLine[f]),
+                               std::ref(vLineFeatures[f]),
+                               std::ref(laserCloudCornerStack[f]),
+                               std::ref(laserCloudCornerFromLocal),
+                               std::ref(kdtreeCornerFromLocal),
+                               std::ref(exTlb),
+                               std::ref(transformTobeMapped));
+
+      threads[1] = std::thread(&Estimator::processPointToPlanVec, this,
+                               std::ref(edgesPlan[f]),
+                               std::ref(vPlanFeatures[f]),
+                               std::ref(laserCloudSurfStack[f]),
+                               std::ref(laserCloudSurfFromLocal),
+                               std::ref(kdtreeSurfFromLocal),
+                               std::ref(exTlb),
+                               std::ref(transformTobeMapped));
+
+      threads[2] = std::thread(&Estimator::processNonFeatureICP, this,
+                               std::ref(edgesNon[f]),
+                               std::ref(vNonFeatures[f]),
+                               std::ref(laserCloudNonFeatureStack[f]),
+                               std::ref(laserCloudNonFeatureFromLocal),
+                               std::ref(kdtreeNonFeatureFromLocal),
+                               std::ref(exTlb),
+                               std::ref(transformTobeMapped));
+
+      threads[0].join();
+      threads[1].join();
+      threads[2].join();
+    }
+    ROS_INFO("Estimator residual construction end %.6f", ros::Time::now().toSec());
 
     //create huber loss function
     ceres::LossFunction* loss_function = NULL;
@@ -1034,49 +1086,6 @@ void Estimator::Estimate(std::list<LidarFrame>& lidarFrameList,
 
     Eigen::Quaterniond q_before_opti = lidarFrameList.back().Q;
     Eigen::Vector3d t_before_opti = lidarFrameList.back().P;
-
-    std::vector<std::vector<ceres::CostFunction *>> edgesLine(windowSize);
-    std::vector<std::vector<ceres::CostFunction *>> edgesPlan(windowSize);
-    std::vector<std::vector<ceres::CostFunction *>> edgesNon(windowSize);
-    std::thread threads[3];
-    for(int f=0; f<windowSize; ++f) {
-      auto frame_curr = lidarFrameList.begin();
-      std::advance(frame_curr, f);
-      transformTobeMapped = Eigen::Matrix4d::Identity();
-      transformTobeMapped.topLeftCorner(3,3) = frame_curr->Q * exRbl;
-      transformTobeMapped.topRightCorner(3,1) = frame_curr->Q * exPbl + frame_curr->P;
-
-      threads[0] = std::thread(&Estimator::processPointToLine, this,
-                               std::ref(edgesLine[f]),
-                               std::ref(vLineFeatures[f]),
-                               std::ref(laserCloudCornerStack[f]),
-                               std::ref(laserCloudCornerFromLocal),
-                               std::ref(kdtreeCornerFromLocal),
-                               std::ref(exTlb),
-                               std::ref(transformTobeMapped));
-
-      threads[1] = std::thread(&Estimator::processPointToPlanVec, this,
-                               std::ref(edgesPlan[f]),
-                               std::ref(vPlanFeatures[f]),
-                               std::ref(laserCloudSurfStack[f]),
-                               std::ref(laserCloudSurfFromLocal),
-                               std::ref(kdtreeSurfFromLocal),
-                               std::ref(exTlb),
-                               std::ref(transformTobeMapped));
-
-      threads[2] = std::thread(&Estimator::processNonFeatureICP, this,
-                               std::ref(edgesNon[f]),
-                               std::ref(vNonFeatures[f]),
-                               std::ref(laserCloudNonFeatureStack[f]),
-                               std::ref(laserCloudNonFeatureFromLocal),
-                               std::ref(kdtreeNonFeatureFromLocal),
-                               std::ref(exTlb),
-                               std::ref(transformTobeMapped));
-
-      threads[0].join();
-      threads[1].join();
-      threads[2].join();
-    }
 
     int cntSurf = 0;
     int cntCorner = 0;
@@ -1200,8 +1209,10 @@ void Estimator::Estimate(std::list<LidarFrame>& lidarFrameList,
     options.max_num_iterations = 10;
     options.minimizer_progress_to_stdout = false;
     options.num_threads = 6;
+    ROS_INFO("Estimator ceres solve start %.6f", ros::Time::now().toSec());
     ceres::Solver::Summary summary;
     ceres::Solve(options, &problem, &summary);
+    ROS_INFO("Estimator ceres solve end %.6f", ros::Time::now().toSec());
 
     double2vector(lidarFrameList);
 
@@ -1313,8 +1324,10 @@ void Estimator::Estimate(std::list<LidarFrame>& lidarFrameList,
         cntFtu++;
       }
 
+      ROS_INFO("Estimator marginalization start %.6f", ros::Time::now().toSec());
       marginalization_info->preMarginalize();
       marginalization_info->marginalize();
+      ROS_INFO("Estimator marginalization end %.6f", ros::Time::now().toSec());
 
       std::unordered_map<long, double *> addr_shift;
       for (int i = 1; i < SLIDEWINDOWSIZE; i++)
@@ -1348,7 +1361,6 @@ void Estimator::MapIncrementLocal(const pcl::PointCloud<PointType>::Ptr& laserCl
                                   const pcl::PointCloud<PointType>::Ptr& laserCloudSurfStack,
                                   const pcl::PointCloud<PointType>::Ptr& laserCloudNonFeatureStack,
                                   const Eigen::Matrix4d& transformTobeMapped){
-  ROS_INFO("Map manager update start %.6f", ros::Time::now().toSec());
   int laserCloudCornerStackNum = laserCloudCornerStack->points.size();
   int laserCloudSurfStackNum = laserCloudSurfStack->points.size();
   int laserCloudNonFeatureStackNum = laserCloudNonFeatureStack->points.size();
@@ -1389,5 +1401,4 @@ void Estimator::MapIncrementLocal(const pcl::PointCloud<PointType>::Ptr& laserCl
   downSizeFilterNonFeature.filter(*temp3);
   laserCloudNonFeatureFromLocal = temp3;
   localMapID ++;
-  ROS_INFO("Map manager update end %.6f", ros::Time::now().toSec());
 }

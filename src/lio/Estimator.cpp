@@ -1113,44 +1113,59 @@ void Estimator::Estimate(std::list<LidarFrame>& lidarFrameList,
     int cntSurf = 0;
     int cntCorner = 0;
     int cntNon = 0;
+    const int maxCornerResidualsPerFrame = 600;
+    const int maxSurfResidualsPerFrame = 900;
+    const int maxNonResidualsPerFrame = 450;
+    auto shouldKeepFeature = [](int idx, int total, int kept, int limit) -> bool {
+      if(limit <= 0 || total <= limit) return true;
+      if(kept >= limit) return false;
+      const int stride = (total + limit - 1) / limit;
+      return (idx % stride) == 0;
+    };
     if(windowSize == SLIDEWINDOWSIZE) {
       thres_dist = 1.0;
       if(iterOpt == 0){
         for(int f=0; f<windowSize; ++f){
-          int cntFtu = 0;
-          for (auto &e : edgesLine[f]) {
-            if(std::fabs(vLineFeatures[f][cntFtu].error) > 1e-5){
-              problem.AddResidualBlock(e, loss_function, para_PR[f]);
-              vLineFeatures[f][cntFtu].valid = true;
+          const int totalCorner = edgesLine[f].size();
+          int keptCornerLocal = 0;
+          for(size_t idx=0; idx<edgesLine[f].size(); ++idx){
+            if(std::fabs(vLineFeatures[f][idx].error) > 1e-5 &&
+               shouldKeepFeature(static_cast<int>(idx), totalCorner, keptCornerLocal, maxCornerResidualsPerFrame)){
+              problem.AddResidualBlock(edgesLine[f][idx], loss_function, para_PR[f]);
+              vLineFeatures[f][idx].valid = true;
+              ++keptCornerLocal;
+              ++cntCorner;
             }else{
-              vLineFeatures[f][cntFtu].valid = false;
+              vLineFeatures[f][idx].valid = false;
             }
-            cntFtu++;
-            cntCorner++;
           }
 
-          cntFtu = 0;
-          for (auto &e : edgesPlan[f]) {
-            if(std::fabs(vPlanFeatures[f][cntFtu].error) > 1e-5){
-              problem.AddResidualBlock(e, loss_function, para_PR[f]);
-              vPlanFeatures[f][cntFtu].valid = true;
+          const int totalSurf = edgesPlan[f].size();
+          int keptSurfLocal = 0;
+          for(size_t idx=0; idx<edgesPlan[f].size(); ++idx){
+            if(std::fabs(vPlanFeatures[f][idx].error) > 1e-5 &&
+               shouldKeepFeature(static_cast<int>(idx), totalSurf, keptSurfLocal, maxSurfResidualsPerFrame)){
+              problem.AddResidualBlock(edgesPlan[f][idx], loss_function, para_PR[f]);
+              vPlanFeatures[f][idx].valid = true;
+              ++keptSurfLocal;
+              ++cntSurf;
             }else{
-              vPlanFeatures[f][cntFtu].valid = false;
+              vPlanFeatures[f][idx].valid = false;
             }
-            cntFtu++;
-            cntSurf++;
           }
 
-          cntFtu = 0;
-          for (auto &e : edgesNon[f]) {
-            if(std::fabs(vNonFeatures[f][cntFtu].error) > 1e-5){
-              problem.AddResidualBlock(e, loss_function, para_PR[f]);
-              vNonFeatures[f][cntFtu].valid = true;
+          const int totalNon = edgesNon[f].size();
+          int keptNonLocal = 0;
+          for(size_t idx=0; idx<edgesNon[f].size(); ++idx){
+            if(std::fabs(vNonFeatures[f][idx].error) > 1e-5 &&
+               shouldKeepFeature(static_cast<int>(idx), totalNon, keptNonLocal, maxNonResidualsPerFrame)){
+              problem.AddResidualBlock(edgesNon[f][idx], loss_function, para_PR[f]);
+              vNonFeatures[f][idx].valid = true;
+              ++keptNonLocal;
+              ++cntNon;
             }else{
-              vNonFeatures[f][cntFtu].valid = false;
+              vNonFeatures[f][idx].valid = false;
             }
-            cntFtu++;
-            cntNon++;
           }
         }
       }else{
@@ -1189,39 +1204,45 @@ void Estimator::Estimate(std::list<LidarFrame>& lidarFrameList,
           thres_dist = 1.0;
         }
         for(int f=0; f<windowSize; ++f){
-          int cntFtu = 0;
-          for (auto &e : edgesLine[f]) {
-            if(std::fabs(vLineFeatures[f][cntFtu].error) > 1e-5){
-              problem.AddResidualBlock(e, loss_function, para_PR[f]);
-              vLineFeatures[f][cntFtu].valid = true;
+          const int totalCorner = edgesLine[f].size();
+          int keptCornerLocal = 0;
+          for(size_t idx=0; idx<edgesLine[f].size(); ++idx){
+            if(std::fabs(vLineFeatures[f][idx].error) > 1e-5 &&
+               shouldKeepFeature(static_cast<int>(idx), totalCorner, keptCornerLocal, maxCornerResidualsPerFrame)){
+              problem.AddResidualBlock(edgesLine[f][idx], loss_function, para_PR[f]);
+              vLineFeatures[f][idx].valid = true;
+              ++keptCornerLocal;
+              ++cntCorner;
             }else{
-              vLineFeatures[f][cntFtu].valid = false;
+              vLineFeatures[f][idx].valid = false;
             }
-            cntFtu++;
-            cntCorner++;
           }
-          cntFtu = 0;
-          for (auto &e : edgesPlan[f]) {
-            if(std::fabs(vPlanFeatures[f][cntFtu].error) > 1e-5){
-              problem.AddResidualBlock(e, loss_function, para_PR[f]);
-              vPlanFeatures[f][cntFtu].valid = true;
+          const int totalSurf = edgesPlan[f].size();
+          int keptSurfLocal = 0;
+          for(size_t idx=0; idx<edgesPlan[f].size(); ++idx){
+            if(std::fabs(vPlanFeatures[f][idx].error) > 1e-5 &&
+               shouldKeepFeature(static_cast<int>(idx), totalSurf, keptSurfLocal, maxSurfResidualsPerFrame)){
+              problem.AddResidualBlock(edgesPlan[f][idx], loss_function, para_PR[f]);
+              vPlanFeatures[f][idx].valid = true;
+              ++keptSurfLocal;
+              ++cntSurf;
             }else{
-              vPlanFeatures[f][cntFtu].valid = false;
+              vPlanFeatures[f][idx].valid = false;
             }
-            cntFtu++;
-            cntSurf++;
           }
 
-          cntFtu = 0;
-          for (auto &e : edgesNon[f]) {
-            if(std::fabs(vNonFeatures[f][cntFtu].error) > 1e-5){
-              problem.AddResidualBlock(e, loss_function, para_PR[f]);
-              vNonFeatures[f][cntFtu].valid = true;
+          const int totalNon = edgesNon[f].size();
+          int keptNonLocal = 0;
+          for(size_t idx=0; idx<edgesNon[f].size(); ++idx){
+            if(std::fabs(vNonFeatures[f][idx].error) > 1e-5 &&
+               shouldKeepFeature(static_cast<int>(idx), totalNon, keptNonLocal, maxNonResidualsPerFrame)){
+              problem.AddResidualBlock(edgesNon[f][idx], loss_function, para_PR[f]);
+              vNonFeatures[f][idx].valid = true;
+              ++keptNonLocal;
+              ++cntNon;
             }else{
-              vNonFeatures[f][cntFtu].valid = false;
+              vNonFeatures[f][idx].valid = false;
             }
-            cntFtu++;
-            cntNon++;
           }
         }
     }
@@ -1229,7 +1250,12 @@ void Estimator::Estimate(std::list<LidarFrame>& lidarFrameList,
     ceres::Solver::Options options;
     options.linear_solver_type = ceres::DENSE_SCHUR;
     options.trust_region_strategy_type = ceres::DOGLEG;
-    options.max_num_iterations = 10;
+    options.max_num_iterations = 8;
+    options.function_tolerance = 1e-4;
+    options.gradient_tolerance = 1e-4;
+    options.parameter_tolerance = 1e-4;
+    options.use_nonmonotonic_steps = true;
+    options.max_consecutive_nonmonotonic_steps = 3;
     options.minimizer_progress_to_stdout = false;
     const unsigned int ceres_threads = std::max(1u, std::thread::hardware_concurrency());
     options.num_threads = static_cast<int>(ceres_threads);

@@ -923,6 +923,7 @@ void Estimator::Estimate(std::list<LidarFrame>& lidarFrameList,
                          const Eigen::Matrix4d& exTlb,
                          const Eigen::Vector3d& gravity){
 
+  ROS_INFO("Estimator optimization start %.6f", ros::Time::now().toSec());
   int num_corner_map = 0;
   int num_surf_map = 0;
 
@@ -1341,11 +1342,13 @@ void Estimator::Estimate(std::list<LidarFrame>& lidarFrameList,
     }
   }
 
+  ROS_INFO("Estimator optimization end %.6f", ros::Time::now().toSec());
 }
 void Estimator::MapIncrementLocal(const pcl::PointCloud<PointType>::Ptr& laserCloudCornerStack,
                                   const pcl::PointCloud<PointType>::Ptr& laserCloudSurfStack,
                                   const pcl::PointCloud<PointType>::Ptr& laserCloudNonFeatureStack,
                                   const Eigen::Matrix4d& transformTobeMapped){
+  ROS_INFO("Map manager update start %.6f", ros::Time::now().toSec());
   int laserCloudCornerStackNum = laserCloudCornerStack->points.size();
   int laserCloudSurfStackNum = laserCloudSurfStack->points.size();
   int laserCloudNonFeatureStackNum = laserCloudNonFeatureStack->points.size();
@@ -1386,4 +1389,5 @@ void Estimator::MapIncrementLocal(const pcl::PointCloud<PointType>::Ptr& laserCl
   downSizeFilterNonFeature.filter(*temp3);
   laserCloudNonFeatureFromLocal = temp3;
   localMapID ++;
+  ROS_INFO("Map manager update end %.6f", ros::Time::now().toSec());
 }

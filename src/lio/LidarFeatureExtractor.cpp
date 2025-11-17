@@ -642,6 +642,7 @@ void LidarFeatureExtractor::FeatureExtract_with_segment(const livox_ros_driver::
   }
 
   PCSeg pcseg;
+  ROS_INFO("Dynamic objects filter start %.6f", ros::Time::now().toSec());
   if(!seg_labels.empty()){
     try{
       pcseg.DoSeg(seg_labels.data(), seg_data.data(), static_cast<int>(seg_labels.size()));
@@ -651,6 +652,7 @@ void LidarFeatureExtractor::FeatureExtract_with_segment(const livox_ros_driver::
       throw;
     }
   }
+  ROS_INFO("Dynamic objects filter end %.6f", ros::Time::now().toSec());
 
   std::size_t cloud_num = laserCloud->size();
   for(std::size_t i=0; i<cloud_num; ++i){
@@ -659,6 +661,7 @@ void LidarFeatureExtractor::FeatureExtract_with_segment(const livox_ros_driver::
     vlines[line_idx]->push_back(laserCloud->points[i]);
   }
 
+  ROS_INFO("Feature extraction start %.6f", ros::Time::now().toSec());
   std::thread threads[N_SCANS];
   for(int i=0; i<N_SCANS; ++i){
     threads[i] = std::thread(&LidarFeatureExtractor::detectFeaturePoint3, this, std::ref(vlines[i]),std::ref(vcorner[i]));
@@ -705,6 +708,7 @@ void LidarFeatureExtractor::FeatureExtract_with_segment(const livox_ros_driver::
       laserNonFeature->push_back(p);
   }
 
+  ROS_INFO("Feature extraction end %.6f", ros::Time::now().toSec());
 }
 
 void LidarFeatureExtractor::FeatureExtract_with_segment_hap(const livox_ros_driver::CustomMsgConstPtr &msg,
@@ -764,6 +768,7 @@ void LidarFeatureExtractor::FeatureExtract_with_segment_hap(const livox_ros_driv
   }
 
   PCSeg pcseg;
+  ROS_INFO("Dynamic objects filter start %.6f", ros::Time::now().toSec());
   if(!seg_labels.empty()){
     try{
       pcseg.DoSeg(seg_labels.data(), seg_data.data(), static_cast<int>(seg_labels.size()));
@@ -773,9 +778,11 @@ void LidarFeatureExtractor::FeatureExtract_with_segment_hap(const livox_ros_driv
       throw;
     }
   }
+  ROS_INFO("Dynamic objects filter end %.6f", ros::Time::now().toSec());
 
   std::size_t cloud_num = laserCloud->size();
 
+  ROS_INFO("Feature extraction start %.6f", ros::Time::now().toSec());
   detectFeaturePoint2(laserCloud, laserSurfFeature, laserNonFeature);
 
   const std::size_t label_size = seg_labels.size();
@@ -805,6 +812,7 @@ void LidarFeatureExtractor::FeatureExtract_with_segment_hap(const livox_ros_driv
       laserNonFeature->push_back(p);
   }
 
+  ROS_INFO("Feature extraction end %.6f", ros::Time::now().toSec());
 }
 
 
@@ -1203,6 +1211,7 @@ void LidarFeatureExtractor::FeatureExtract(const livox_ros_driver::CustomMsgCons
                                            pcl::PointCloud<PointType>::Ptr& laserConerFeature,
                                            pcl::PointCloud<PointType>::Ptr& laserSurfFeature,
                                            const int Used_Line,const int lidar_type){
+  ROS_INFO("Feature extraction start %.6f", ros::Time::now().toSec());
   laserCloud->clear();
   laserConerFeature->clear();
   laserSurfFeature->clear();
@@ -1270,6 +1279,7 @@ void LidarFeatureExtractor::FeatureExtract(const livox_ros_driver::CustomMsgCons
   if(std::fabs(p.normal_z - 2.0) < 1e-5)
   laserSurfFeature->push_back(p);
   }
+  ROS_INFO("Feature extraction end %.6f", ros::Time::now().toSec());
 }
 
 void LidarFeatureExtractor::FeatureExtract_hap(const livox_ros_driver::CustomMsgConstPtr &msg,
@@ -1278,6 +1288,7 @@ void LidarFeatureExtractor::FeatureExtract_hap(const livox_ros_driver::CustomMsg
                                                pcl::PointCloud<PointType>::Ptr& laserSurfFeature,
                                                pcl::PointCloud<PointType>::Ptr& laserNonFeature,
                                                const int Used_Line){
+  ROS_INFO("Feature extraction start %.6f", ros::Time::now().toSec());
   laserCloud->clear();
   laserConerFeature->clear();
   laserSurfFeature->clear();
@@ -1334,11 +1345,13 @@ void LidarFeatureExtractor::FeatureExtract_hap(const livox_ros_driver::CustomMsg
     if(std::fabs(p.normal_z - 3.0) < 1e-5)
       laserNonFeature->push_back(p);
   }
+  ROS_INFO("Feature extraction end %.6f", ros::Time::now().toSec());
 }
 
 void LidarFeatureExtractor::FeatureExtract_Mid(pcl::PointCloud<pcl::PointXYZINormal>::Ptr &msg,
                                            pcl::PointCloud<PointType>::Ptr& laserConerFeature,
                                            pcl::PointCloud<PointType>::Ptr& laserSurfFeature){
+    ROS_INFO("Feature extraction start %.6f", ros::Time::now().toSec());
     laserConerFeature->clear();
     laserSurfFeature->clear();
     for(auto & ptr : vlines){
@@ -1383,4 +1396,5 @@ void LidarFeatureExtractor::FeatureExtract_Mid(pcl::PointCloud<pcl::PointXYZINor
         if(std::fabs(p.normal_z - 2.0) < 1e-5)
             laserSurfFeature->push_back(p);
     }
+    ROS_INFO("Feature extraction end %.6f", ros::Time::now().toSec());
 }

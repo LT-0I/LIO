@@ -157,7 +157,7 @@ void Estimator::processPointToLine(std::vector<ceres::CostFunction *>& edges,
     if(std::isnan(_pointSel.x) || std::isnan(_pointSel.y) ||std::isnan(_pointSel.z)) continue;
 
     const auto* globalCornerMap = GlobalCornerMap[id];
-    auto* globalCornerKd = CornerKdMap[id];
+    const auto* globalCornerKd = CornerKdMap[id];
     if(globalCornerMap && globalCornerKd && globalCornerMap->points.size() > 100) {
       globalCornerKd->nearestKSearch(_pointSel, 5, _pointSearchInd, _pointSearchSqDis);
       
@@ -379,7 +379,7 @@ void Estimator::processPointToPlan(std::vector<ceres::CostFunction *>& edges,
     if(std::isnan(_pointSel.x) || std::isnan(_pointSel.y) ||std::isnan(_pointSel.z)) continue;
 
     const auto* globalSurfMap = GlobalSurfMap[id];
-    auto* globalSurfKd = SurfKdMap[id];
+    const auto* globalSurfKd = SurfKdMap[id];
     if(globalSurfMap && globalSurfKd && globalSurfMap->points.size() > 50) {
       globalSurfKd->nearestKSearch(_pointSel, 5, _pointSearchInd, _pointSearchSqDis);
 
@@ -543,17 +543,17 @@ void Estimator::processPointToPlanVec(std::vector<ceres::CostFunction *>& edges,
 
     if(std::isnan(_pointSel.x) || std::isnan(_pointSel.y) ||std::isnan(_pointSel.z)) continue;
 
-    const auto* globalSurfMap = GlobalSurfMap[id];
-    auto* globalSurfKd = SurfKdMap[id];
-    if(globalSurfMap && globalSurfKd && globalSurfMap->points.size() > 50) {
-      globalSurfKd->nearestKSearch(_pointSel, 5, _pointSearchInd, _pointSearchSqDis);
+    const auto* globalSurfMapPlanVec = GlobalSurfMap[id];
+    const auto* globalSurfKdPlanVec = SurfKdMap[id];
+    if(globalSurfMapPlanVec && globalSurfKdPlanVec && globalSurfMapPlanVec->points.size() > 50) {
+      globalSurfKdPlanVec->nearestKSearch(_pointSel, 5, _pointSearchInd, _pointSearchSqDis);
 
       if (_pointSearchSqDis[4] < thres_dist) {
         debug_num1 ++;
         for (int j = 0; j < 5; j++) {
-          _matA0(j, 0) = globalSurfMap->points[_pointSearchInd[j]].x;
-          _matA0(j, 1) = globalSurfMap->points[_pointSearchInd[j]].y;
-          _matA0(j, 2) = globalSurfMap->points[_pointSearchInd[j]].z;
+          _matA0(j, 0) = globalSurfMapPlanVec->points[_pointSearchInd[j]].x;
+          _matA0(j, 1) = globalSurfMapPlanVec->points[_pointSearchInd[j]].y;
+          _matA0(j, 2) = globalSurfMapPlanVec->points[_pointSearchInd[j]].z;
         }
         _matX0 = _matA0.colPivHouseholderQr().solve(_matB0);
 
@@ -573,9 +573,9 @@ void Estimator::processPointToPlanVec(std::vector<ceres::CostFunction *>& edges,
 
         bool planeValid = true;
         for (int j = 0; j < 5; j++) {
-          if (std::fabs(pa * globalSurfMap->points[_pointSearchInd[j]].x +
-                        pb * globalSurfMap->points[_pointSearchInd[j]].y +
-                        pc * globalSurfMap->points[_pointSearchInd[j]].z + pd) > 0.2) {
+          if (std::fabs(pa * globalSurfMapPlanVec->points[_pointSearchInd[j]].x +
+                        pb * globalSurfMapPlanVec->points[_pointSearchInd[j]].y +
+                        pc * globalSurfMapPlanVec->points[_pointSearchInd[j]].z + pd) > 0.2) {
             planeValid = false;
             break;
           }
@@ -729,7 +729,7 @@ void Estimator::processNonFeatureICP(std::vector<ceres::CostFunction *>& edges,
     if(std::isnan(_pointSel.x) || std::isnan(_pointSel.y) ||std::isnan(_pointSel.z)) continue;
 
     const auto* globalNonFeatureMap = GlobalNonFeatureMap[id];
-    auto* globalNonFeatureKd = NonFeatureKdMap[id];
+    const auto* globalNonFeatureKd = NonFeatureKdMap[id];
     if(globalNonFeatureMap && globalNonFeatureKd && globalNonFeatureMap->points.size() > 100) {
       globalNonFeatureKd->nearestKSearch(_pointSel, 5, _pointSearchInd, _pointSearchSqDis);
       if (_pointSearchSqDis[4] < 1 * thres_dist) {
@@ -961,21 +961,19 @@ void Estimator::Estimate(std::list<LidarFrame>& lidarFrameList,
   kdtreeNonFeatureFromLocal->setInputCloud(laserCloudNonFeatureFromLocal);
 
   ROS_INFO("Estimator map data fetch start %.6f", ros::Time::now().toSec());
-  std::unique_lock<std::mutex> locker3(map_manager->mtx_MapManager);
+  auto map_snapshot = map_manager->AcquireSnapshot();
   for(int i = 0; i < 4851; i++){
-    CornerKdMap[i] = map_manager->getCornerKdMapPtr(i);
-    SurfKdMap[i] = map_manager->getSurfKdMapPtr(i);
-    NonFeatureKdMap[i] = map_manager->getNonFeatureKdMapPtr(i);
+    CornerKdMap[i] = map_snapshot->corner_kd + i;
+    SurfKdMap[i] = map_snapshot->surf_kd + i;
+    NonFeatureKdMap[i] = map_snapshot->nonfeature_kd + i;
 
-    GlobalSurfMap[i] = &map_manager->laserCloudSurf_for_match[i];
-    GlobalCornerMap[i] = &map_manager->laserCloudCorner_for_match[i];
-    GlobalNonFeatureMap[i] = &map_manager->laserCloudNonFeature_for_match[i];
+    GlobalSurfMap[i] = map_snapshot->surf_map + i;
+    GlobalCornerMap[i] = map_snapshot->corner_map + i;
+    GlobalNonFeatureMap[i] = map_snapshot->nonfeature_map + i;
   }
-  laserCenWidth_last = map_manager->get_laserCloudCenWidth_last();
-  laserCenHeight_last = map_manager->get_laserCloudCenHeight_last();
-  laserCenDepth_last = map_manager->get_laserCloudCenDepth_last();
-
-  locker3.unlock();
+  laserCenWidth_last = map_snapshot->laserCenWidth_last;
+  laserCenHeight_last = map_snapshot->laserCenHeight_last;
+  laserCenDepth_last = map_snapshot->laserCenDepth_last;
   ROS_INFO("Estimator map data fetch end %.6f", ros::Time::now().toSec());
 
   // store point to line features

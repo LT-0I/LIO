@@ -260,9 +260,9 @@ private:
 	std::mutex mtx_Map;
 	std::thread threadMap;
 
-	pcl::KdTreeFLANN<PointType>* CornerKdMap[10000];
-	pcl::KdTreeFLANN<PointType>* SurfKdMap[10000];
-	pcl::KdTreeFLANN<PointType>* NonFeatureKdMap[10000];
+	const pcl::KdTreeFLANN<PointType>* CornerKdMap[10000];
+	const pcl::KdTreeFLANN<PointType>* SurfKdMap[10000];
+	const pcl::KdTreeFLANN<PointType>* NonFeatureKdMap[10000];
 
 	const pcl::PointCloud<PointType>* GlobalSurfMap[10000];
 	const pcl::PointCloud<PointType>* GlobalCornerMap[10000];

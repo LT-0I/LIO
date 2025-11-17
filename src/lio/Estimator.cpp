@@ -1,4 +1,6 @@
 #include "Estimator/Estimator.h"
+#include <algorithm>
+#include <thread>
 
 Estimator::Estimator(const float& filter_corner, const float& filter_surf){
   laserCloudCornerFromLocal.reset(new pcl::PointCloud<PointType>);
@@ -978,10 +980,6 @@ void Estimator::Estimate(std::list<LidarFrame>& lidarFrameList,
     v.reserve(2000);
   }
 
-  std::vector<std::vector<ceres::CostFunction *>> edgesLine(windowSize);
-  std::vector<std::vector<ceres::CostFunction *>> edgesPlan(windowSize);
-  std::vector<std::vector<ceres::CostFunction *>> edgesNon(windowSize);
-
   if(windowSize == SLIDEWINDOWSIZE) {
     plan_weight_tan = 0.0003;
     thres_dist = 1.0;
@@ -1001,44 +999,56 @@ void Estimator::Estimate(std::list<LidarFrame>& lidarFrameList,
     std::vector<std::vector<ceres::CostFunction *>> edgesNon(windowSize);
 
     ROS_INFO("Estimator residual construction start %.6f", ros::Time::now().toSec());
-    std::thread threads[3];
-    for(int f=0; f<windowSize; ++f) {
-      auto frame_curr = lidarFrameList.begin();
-      std::advance(frame_curr, f);
-      transformTobeMapped = Eigen::Matrix4d::Identity();
-      transformTobeMapped.topLeftCorner(3,3) = frame_curr->Q * exRbl;
-      transformTobeMapped.topRightCorner(3,1) = frame_curr->Q * exPbl + frame_curr->P;
+    const unsigned int hw_threads = std::max(1u, std::thread::hardware_concurrency());
+    const int worker_count = std::min<int>(windowSize, std::max(1u, hw_threads));
+    const int frames_per_worker = std::max(1, (windowSize + worker_count - 1) / worker_count);
+    auto process_frames = [&](int start, int end){
+      for(int f=start; f<end; ++f) {
+        edgesLine[f].clear();
+        edgesPlan[f].clear();
+        edgesNon[f].clear();
+        auto frame_curr = lidarFrameList.begin();
+        std::advance(frame_curr, f);
+        Eigen::Matrix4d localTransform = Eigen::Matrix4d::Identity();
+        localTransform.topLeftCorner(3,3) = frame_curr->Q * exRbl;
+        localTransform.topRightCorner(3,1) = frame_curr->Q * exPbl + frame_curr->P;
 
-      threads[0] = std::thread(&Estimator::processPointToLine, this,
-                               std::ref(edgesLine[f]),
-                               std::ref(vLineFeatures[f]),
-                               std::ref(laserCloudCornerStack[f]),
-                               std::ref(laserCloudCornerFromLocal),
-                               std::ref(kdtreeCornerFromLocal),
-                               std::ref(exTlb),
-                               std::ref(transformTobeMapped));
+        processPointToLine(edgesLine[f],
+                           vLineFeatures[f],
+                           laserCloudCornerStack[f],
+                           laserCloudCornerFromLocal,
+                           kdtreeCornerFromLocal,
+                           exTlb,
+                           localTransform);
 
-      threads[1] = std::thread(&Estimator::processPointToPlanVec, this,
-                               std::ref(edgesPlan[f]),
-                               std::ref(vPlanFeatures[f]),
-                               std::ref(laserCloudSurfStack[f]),
-                               std::ref(laserCloudSurfFromLocal),
-                               std::ref(kdtreeSurfFromLocal),
-                               std::ref(exTlb),
-                               std::ref(transformTobeMapped));
+        processPointToPlanVec(edgesPlan[f],
+                              vPlanFeatures[f],
+                              laserCloudSurfStack[f],
+                              laserCloudSurfFromLocal,
+                              kdtreeSurfFromLocal,
+                              exTlb,
+                              localTransform);
 
-      threads[2] = std::thread(&Estimator::processNonFeatureICP, this,
-                               std::ref(edgesNon[f]),
-                               std::ref(vNonFeatures[f]),
-                               std::ref(laserCloudNonFeatureStack[f]),
-                               std::ref(laserCloudNonFeatureFromLocal),
-                               std::ref(kdtreeNonFeatureFromLocal),
-                               std::ref(exTlb),
-                               std::ref(transformTobeMapped));
+        processNonFeatureICP(edgesNon[f],
+                             vNonFeatures[f],
+                             laserCloudNonFeatureStack[f],
+                             laserCloudNonFeatureFromLocal,
+                             kdtreeNonFeatureFromLocal,
+                             exTlb,
+                             localTransform);
+      }
+    };
 
-      threads[0].join();
-      threads[1].join();
-      threads[2].join();
+    std::vector<std::thread> residual_workers;
+    residual_workers.reserve(worker_count);
+    for(int w=0; w<worker_count; ++w){
+      int start = w * frames_per_worker;
+      if(start >= windowSize) break;
+      int end = std::min(windowSize, start + frames_per_worker);
+      residual_workers.emplace_back(process_frames, start, end);
+    }
+    for(auto& worker : residual_workers){
+      worker.join();
     }
     ROS_INFO("Estimator residual construction end %.6f", ros::Time::now().toSec());
 
@@ -1208,7 +1218,8 @@ void Estimator::Estimate(std::list<LidarFrame>& lidarFrameList,
     options.trust_region_strategy_type = ceres::DOGLEG;
     options.max_num_iterations = 10;
     options.minimizer_progress_to_stdout = false;
-    options.num_threads = 6;
+    const unsigned int ceres_threads = std::max(1u, std::thread::hardware_concurrency());
+    options.num_threads = static_cast<int>(ceres_threads);
     ROS_INFO("Estimator ceres solve start %.6f", ros::Time::now().toSec());
     ceres::Solver::Summary summary;
     ceres::Solve(options, &problem, &summary);
@@ -1262,36 +1273,37 @@ void Estimator::Estimate(std::list<LidarFrame>& lidarFrameList,
       edgesLine[f].clear();
       edgesPlan[f].clear();
       edgesNon[f].clear();
-      threads[0] = std::thread(&Estimator::processPointToLine, this,
-                               std::ref(edgesLine[f]),
-                               std::ref(vLineFeatures[f]),
-                               std::ref(laserCloudCornerStack[f]),
-                               std::ref(laserCloudCornerFromLocal),
-                               std::ref(kdtreeCornerFromLocal),
-                               std::ref(exTlb),
-                               std::ref(transformTobeMapped));
+      std::thread marginal_threads[3];
+      marginal_threads[0] = std::thread(&Estimator::processPointToLine, this,
+                                        std::ref(edgesLine[f]),
+                                        std::ref(vLineFeatures[f]),
+                                        std::ref(laserCloudCornerStack[f]),
+                                        std::ref(laserCloudCornerFromLocal),
+                                        std::ref(kdtreeCornerFromLocal),
+                                        std::ref(exTlb),
+                                        std::ref(transformTobeMapped));
 
-      threads[1] = std::thread(&Estimator::processPointToPlanVec, this,
-                               std::ref(edgesPlan[f]),
-                               std::ref(vPlanFeatures[f]),
-                               std::ref(laserCloudSurfStack[f]),
-                               std::ref(laserCloudSurfFromLocal),
-                               std::ref(kdtreeSurfFromLocal),
-                               std::ref(exTlb),
-                               std::ref(transformTobeMapped));
+      marginal_threads[1] = std::thread(&Estimator::processPointToPlanVec, this,
+                                        std::ref(edgesPlan[f]),
+                                        std::ref(vPlanFeatures[f]),
+                                        std::ref(laserCloudSurfStack[f]),
+                                        std::ref(laserCloudSurfFromLocal),
+                                        std::ref(kdtreeSurfFromLocal),
+                                        std::ref(exTlb),
+                                        std::ref(transformTobeMapped));
 
-      threads[2] = std::thread(&Estimator::processNonFeatureICP, this,
-                               std::ref(edgesNon[f]),
-                               std::ref(vNonFeatures[f]),
-                               std::ref(laserCloudNonFeatureStack[f]),
-                               std::ref(laserCloudNonFeatureFromLocal),
-                               std::ref(kdtreeNonFeatureFromLocal),
-                               std::ref(exTlb),
-                               std::ref(transformTobeMapped));      
-                      
-      threads[0].join();
-      threads[1].join();
-      threads[2].join();
+      marginal_threads[2] = std::thread(&Estimator::processNonFeatureICP, this,
+                                        std::ref(edgesNon[f]),
+                                        std::ref(vNonFeatures[f]),
+                                        std::ref(laserCloudNonFeatureStack[f]),
+                                        std::ref(laserCloudNonFeatureFromLocal),
+                                        std::ref(kdtreeNonFeatureFromLocal),
+                                        std::ref(exTlb),
+                                        std::ref(transformTobeMapped));      
+                    
+      marginal_threads[0].join();
+      marginal_threads[1].join();
+      marginal_threads[2].join();
       int cntFtu = 0;
       for (auto &e : edgesLine[f]) {
         if(vLineFeatures[f][cntFtu].valid){

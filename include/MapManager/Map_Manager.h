@@ -80,6 +80,15 @@ public:
     pcl::KdTreeFLANN<PointType> getNonFeatureKdMap(int i){
       return NonFeatureKdMap_last[i];
     }
+    pcl::KdTreeFLANN<PointType>* getCornerKdMapPtr(int i){
+      return &CornerKdMap_last[i];
+    }
+    pcl::KdTreeFLANN<PointType>* getSurfKdMapPtr(int i){
+      return &SurfKdMap_last[i];
+    }
+    pcl::KdTreeFLANN<PointType>* getNonFeatureKdMapPtr(int i){
+      return &NonFeatureKdMap_last[i];
+    }
 		pcl::PointCloud<PointType>::Ptr get_corner_map(){
 			return laserCloudCornerFromMap;
 		}

@@ -941,11 +941,9 @@ void Estimator::Estimate(std::list<LidarFrame>& lidarFrameList,
                          const Eigen::Matrix4d& exTlb,
                          const Eigen::Vector3d& gravity){
 
-  ROS_INFO("Estimator optimization start %.6f", ros::Time::now().toSec());
   int num_corner_map = 0;
   int num_surf_map = 0;
 
-  static uint32_t frame_count = 0;
   int windowSize = lidarFrameList.size();
   Eigen::Matrix4d transformTobeMapped = Eigen::Matrix4d::Identity();
   Eigen::Matrix3d exRbl = exTlb.topLeftCorner(3,3).transpose();
@@ -961,7 +959,6 @@ void Estimator::Estimate(std::list<LidarFrame>& lidarFrameList,
   kdtreeSurfFromLocal->setInputCloud(laserCloudSurfFromLocal);
   kdtreeNonFeatureFromLocal->setInputCloud(laserCloudNonFeatureFromLocal);
 
-  ROS_INFO("Estimator map data fetch start %.6f", ros::Time::now().toSec());
   auto map_snapshot = map_manager->AcquireSnapshot();
   for(int i = 0; i < 4851; i++){
     CornerKdMap[i] = map_snapshot->corner_kd + i;
@@ -975,7 +972,6 @@ void Estimator::Estimate(std::list<LidarFrame>& lidarFrameList,
   laserCenWidth_last = map_snapshot->laserCenWidth_last;
   laserCenHeight_last = map_snapshot->laserCenHeight_last;
   laserCenDepth_last = map_snapshot->laserCenDepth_last;
-  ROS_INFO("Estimator map data fetch end %.6f", ros::Time::now().toSec());
 
   // store point to line features
   std::vector<std::vector<FeatureLine>> vLineFeatures(windowSize);
@@ -1012,7 +1008,6 @@ void Estimator::Estimate(std::list<LidarFrame>& lidarFrameList,
     std::vector<std::vector<ceres::CostFunction *>> edgesPlan(windowSize);
     std::vector<std::vector<ceres::CostFunction *>> edgesNon(windowSize);
 
-    ROS_INFO("Estimator residual construction start %.6f", ros::Time::now().toSec());
     const unsigned int hw_threads = std::max(1u, std::thread::hardware_concurrency());
     const int worker_count = std::min<int>(windowSize, std::max(1u, hw_threads));
     const int frames_per_worker = std::max(1, (windowSize + worker_count - 1) / worker_count);
@@ -1064,7 +1059,6 @@ void Estimator::Estimate(std::list<LidarFrame>& lidarFrameList,
     for(auto& worker : residual_workers){
       worker.join();
     }
-    ROS_INFO("Estimator residual construction end %.6f", ros::Time::now().toSec());
 
     //create huber loss function
     ceres::LossFunction* loss_function = NULL;
@@ -1260,10 +1254,8 @@ void Estimator::Estimate(std::list<LidarFrame>& lidarFrameList,
     options.minimizer_progress_to_stdout = false;
     const unsigned int ceres_threads = std::max(1u, std::thread::hardware_concurrency());
     options.num_threads = static_cast<int>(ceres_threads);
-    ROS_INFO("Estimator ceres solve start %.6f", ros::Time::now().toSec());
     ceres::Solver::Summary summary;
     ceres::Solve(options, &problem, &summary);
-    ROS_INFO("Estimator ceres solve end %.6f", ros::Time::now().toSec());
 
     double2vector(lidarFrameList);
 
@@ -1274,7 +1266,6 @@ void Estimator::Estimate(std::list<LidarFrame>& lidarFrameList,
     double deltaT = (t_before_opti - t_after_opti).norm();
 
     if (deltaR < 0.05 && deltaT < 0.05 || (iterOpt+1) == max_iters){
-      ROS_INFO("Frame: %d\n",frame_count++);
       if(windowSize != SLIDEWINDOWSIZE) break;
       // apply marginalization
       auto *marginalization_info = new MarginalizationInfo();
@@ -1376,10 +1367,8 @@ void Estimator::Estimate(std::list<LidarFrame>& lidarFrameList,
         cntFtu++;
       }
 
-      ROS_INFO("Estimator marginalization start %.6f", ros::Time::now().toSec());
       marginalization_info->preMarginalize();
       marginalization_info->marginalize();
-      ROS_INFO("Estimator marginalization end %.6f", ros::Time::now().toSec());
 
       std::unordered_map<long, double *> addr_shift;
       for (int i = 1; i < SLIDEWINDOWSIZE; i++)
@@ -1407,7 +1396,6 @@ void Estimator::Estimate(std::list<LidarFrame>& lidarFrameList,
     }
   }
 
-  ROS_INFO("Estimator optimization end %.6f", ros::Time::now().toSec());
 }
 void Estimator::MapIncrementLocal(const pcl::PointCloud<PointType>::Ptr& laserCloudCornerStack,
                                   const pcl::PointCloud<PointType>::Ptr& laserCloudSurfStack,

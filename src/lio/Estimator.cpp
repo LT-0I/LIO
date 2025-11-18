@@ -941,6 +941,7 @@ void Estimator::Estimate(std::list<LidarFrame>& lidarFrameList,
                          const Eigen::Matrix4d& exTlb,
                          const Eigen::Vector3d& gravity){
 
+  static uint32_t frame_count = 0;
   int num_corner_map = 0;
   int num_surf_map = 0;
 
@@ -1266,6 +1267,7 @@ void Estimator::Estimate(std::list<LidarFrame>& lidarFrameList,
     double deltaT = (t_before_opti - t_after_opti).norm();
 
     if (deltaR < 0.05 && deltaT < 0.05 || (iterOpt+1) == max_iters){
+      ROS_INFO("Frame: %u", frame_count++);
       if(windowSize != SLIDEWINDOWSIZE) break;
       // apply marginalization
       auto *marginalization_info = new MarginalizationInfo();

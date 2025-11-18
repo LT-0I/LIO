@@ -31,6 +31,7 @@ Estimator::Estimator(const float& filter_corner, const float& filter_surf){
   kdtreeCornerFromLocal.reset(new pcl::KdTreeFLANN<PointType>);
   kdtreeSurfFromLocal.reset(new pcl::KdTreeFLANN<PointType>);
   kdtreeNonFeatureFromLocal.reset(new pcl::KdTreeFLANN<PointType>);
+  std::fill(std::begin(localFrameStamp), std::end(localFrameStamp), 0L);
 
   std::fill(std::begin(CornerKdMap), std::end(CornerKdMap), nullptr);
   std::fill(std::begin(SurfKdMap), std::end(SurfKdMap), nullptr);
@@ -1421,6 +1422,8 @@ void Estimator::MapIncrementLocal(const pcl::PointCloud<PointType>::Ptr& laserCl
   localCornerMap[Id]->clear();
   localSurfMap[Id]->clear();
   localNonFeatureMap[Id]->clear();
+  localFrameId++;
+  localFrameStamp[Id] = localFrameId;
   for (int i = 0; i < laserCloudCornerStackNum; i++) {
     MAP_MANAGER::pointAssociateToMap(&laserCloudCornerStack->points[i], &pointSel, transformTobeMapped);
     localCornerMap[Id]->push_back(pointSel);
@@ -1434,10 +1437,38 @@ void Estimator::MapIncrementLocal(const pcl::PointCloud<PointType>::Ptr& laserCl
     localNonFeatureMap[Id]->push_back(pointSel2);
   }
 
+  Eigen::Vector3d anchor = transformTobeMapped.topRightCorner(3,1);
+  Eigen::Matrix3d rot = transformTobeMapped.topLeftCorner(3,3);
+  Eigen::Vector3d forward = rot.col(0);
+  Eigen::Vector3d left = rot.col(1);
+  Eigen::Vector3d up = rot.col(2);
+  const double forwardLimit = localBoxForward;
+  const double backwardLimit = localBoxBackward;
+  const double sideLimit = localBoxSide;
+  const double verticalLimit = localBoxVertical;
+  const long minFrameStamp = std::max(0L, localFrameId - static_cast<long>(localMapHistoryFrames) + 1);
+  auto pointInLocalBox = [&](const PointType& pt)->bool{
+    Eigen::Vector3d rel(pt.x - anchor.x(), pt.y - anchor.y(), pt.z - anchor.z());
+    double dForward = rel.dot(forward);
+    if(dForward > forwardLimit || dForward < -backwardLimit) return false;
+    double dSide = rel.dot(left);
+    if(std::fabs(dSide) > sideLimit) return false;
+    double dUp = rel.dot(up);
+    if(std::fabs(dUp) > verticalLimit) return false;
+    return true;
+  };
+
   for (int i = 0; i < localMapWindowSize; i++) {
-    *laserCloudCornerFromLocal += *localCornerMap[i];
-    *laserCloudSurfFromLocal += *localSurfMap[i];
-    *laserCloudNonFeatureFromLocal += *localNonFeatureMap[i];
+    if(localFrameStamp[i] < minFrameStamp) continue;
+    for(const auto& pt : *localCornerMap[i]) {
+      if(pointInLocalBox(pt)) laserCloudCornerFromLocal->push_back(pt);
+    }
+    for(const auto& pt : *localSurfMap[i]) {
+      if(pointInLocalBox(pt)) laserCloudSurfFromLocal->push_back(pt);
+    }
+    for(const auto& pt : *localNonFeatureMap[i]) {
+      if(pointInLocalBox(pt)) laserCloudNonFeatureFromLocal->push_back(pt);
+    }
   }
   pcl::PointCloud<PointType>::Ptr temp(new pcl::PointCloud<PointType>());
   downSizeFilterCorner.setInputCloud(laserCloudCornerFromLocal);

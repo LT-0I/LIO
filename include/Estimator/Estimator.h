@@ -277,6 +277,13 @@ private:
 	pcl::PointCloud<PointType>::Ptr localCornerMap[localMapWindowSize];
 	pcl::PointCloud<PointType>::Ptr localSurfMap[localMapWindowSize];
 	pcl::PointCloud<PointType>::Ptr localNonFeatureMap[localMapWindowSize];
+	long localFrameId = 0;
+	long localFrameStamp[localMapWindowSize];
+	static const int localMapHistoryFrames = 20;
+	double localBoxForward = 40.0;
+	double localBoxBackward = 8.0;
+	double localBoxSide = 8.0;
+	double localBoxVertical = 6.0;
 
 	int map_update_ID = 0;
 

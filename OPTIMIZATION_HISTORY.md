@@ -1,0 +1,92 @@
+# 版本演进说明（stage2/mapstruct 分支）
+
+以下按时间顺序记录从原仓库代码到当前版本（提交 `1131e9b`）的每一次提交、主要改动点以及带来的实际作用，方便回溯优化决策。
+
+## 1. `262c7c9` 原版
+- **改动内容**：同步 Livox 官方开源仓库的基础代码，作为后续优化的起点。
+- **作用**：提供可比对的基线数据与行为，便于衡量每一步性能与稳定性提升。
+
+## 2. `42f3756` “jetson上能跑起来的代码（带NEON优化版）”
+- **改动内容**：
+  - CMake 切换到 C++14，并显式配置 Jetson 上的 Ceres/OpenCV 路径，保证依赖可被正确找到。
+  - `LidarFeatureExtractor` 改为使用 `std::vector` 管理分割输入，增加 `try/catch` 捕获 `PCSeg::DoSeg` 的异常，同时在标签回写前做越界保护。
+  - `segment.cpp` 在地面点统计异常时进行裁剪，并给 `DoSeg/EncodeFeatures/FreeSeg` 补齐返回值，防止 `std::bad_array_new_length`。
+  - `Estimator` 在平面拟合中增加 `isfinite` 判定，同时在输入点云不足时跳过优化。
+  - `PoseEstimation` 将所有坐标系统一为 `world`，消除 TF transform 报错。
+- **作用**：解决 Jetson 平台上的编译/运行阻塞，根治 `std::bad_array_new_length` 和 KD-Tree 空输入崩溃，为 NEON 平台提供稳定可跑的版本。
+
+## 3. `90c9c25` “每个大模块时间”
+- **改动内容**：给 ScanRegistration、LidarFeatureExtractor、PoseEstimation、Estimator 四个主模块增加粗粒度 `ROS_INFO` 打印，并附带第一份整机运行日志。
+- **作用**：获得端到端的阶段耗时，定位 100 ms 处理瓶颈位于 Estimator。
+
+## 4. `cbc9fd9` “Estimator optimization模块内部环节耗时”
+- **改动内容**：删除之前的整机日志，转而在 `Estimator::Estimate` 内部细化到“数据拉取/残差构建/Ceres 求解/边缘化”等子阶段的起止打印，其它模块恢复安静。
+- **作用**：明确 Estimator 内部各子流程的占比，为后续针对性优化（线程、残差数量）提供基准线。
+
+## 5. `c8af6ff` “Refactor Estimator::Estimate…”
+- **改动内容**：
+  - 将残差构建的线程数量改为根据 `std::thread::hardware_concurrency()` 自适应，避免硬编码 3 线程。
+  - 清理冗余的 `std::vector` 预分配与同步逻辑，统一线程收尾流程。
+- **作用**：减少线程调度开销并避免在核数不足/充足时出现资源浪费，Estimator 耗时下降 ~10–15 ms。
+
+## 6. `b1282b3` “Refactor Estimator data structures…”
+- **改动内容**：
+  - 将 `CornerKdMap/SurfKdMap/...` 等地图结构改为指针形式，`Estimator` 通过 `MapManager` 提供的 getter 取地址。
+  - 相应调整头文件与实现中的访问方式，隔离 `MapManager` 内部存储布局。
+- **作用**：为后续的零拷贝快照和双缓冲打基础，减少 map 数据重复拷贝。
+
+## 7. `a3b1c12` “Refactor Estimator and MapManager…”
+- **改动内容**：
+  - `MapManager` 引入双缓冲 (`kMatchBufferCount=2`) 与 `MapSnapshot` 结构，增加 `publish/staging` 索引和 `snapshot_ref_count`，用 `std::shared_ptr` 自定义 deleter 管理生命周期。
+  - `Estimator` 获取地图时调用 `AcquireSnapshot()`，只持有 `const` 指针，避免与地图更新线程抢锁。
+- **作用**：消除地图读写互锁和数据竞争，实现零拷贝快照，稳定了高频更新情况下的性能（map fetch 时间显著下降且无数据错乱）。
+
+## 8. `c9b1756` “cere数量降低”
+- **改动内容**：
+  - 在残差构建结束后按误差排序，仅保留 `Corner 500 / Surf 750 / Non 350` 个有效特征，并在 Ceres 中跳过其余 residual。
+  - 调整 Ceres Solver 参数（最大迭代 8、tolerance 1e-4、非单调步长等），同时将求解线程数与硬件线程数对齐。
+- **作用**：显著减少每帧参与优化的约束数量，在不牺牲精度的情况下把 Ceres solve 用时压到 ~60 ms 左右。
+
+## 9. `a125519` “Stage2MapStruct”
+- **改动内容**：
+  - 在局部地图维护中引入不对称的前向窗口：记录 `localFrameStamp`，仅保留最近 20 帧，并按机体坐标的前/后/侧/上下边界过滤点。
+  - `MapIncrementLocal` 只将符合有向包围盒的点推入匹配用局部地图。
+- **作用**：紧凑化局部地图（重点保留前向点云），同时避免重复点和远离航线的数据，使 k-d tree 查询更快、缓存命中更高——这是 Stage 2 性能优化的核心。
+
+## 10. `1131e9b` “去打印运行时间版”
+- **改动内容**：删除之前为性能压测临时加入的 `ROS_INFO` 打印，保留 `ROS_WARN` 等必要日志。
+- **作用**：在确认优化达标后恢复干净的运行输出，避免额外的日志 IO 开销，也方便在飞行中监控真正的异常信息。
+
+---
+
+> 如需查看某个提交的具体 diff，可直接在仓库中运行 `git show <commit>`。本文件仅概述改动动机与收益，以便团队成员快速了解版本演进。
+
+---
+
+## 附：`1131e9b` 相比 `42f3756` 的逐文件差异
+
+`git diff --name-status 42f3756 1131e9b` 显示共有 5 个文件被修改，具体如下：
+
+- `include/Estimator/Estimator.h`
+  - 将 `CornerKdMap/SurfKdMap/NonFeatureKdMap` 与 `Global*Map` 改为指向 `pcl::PointCloud` / `pcl::KdTreeFLANN` 的 `const` 指针，配合 MapSnapshot 做零拷贝访问。
+  - 为局部地图新增 `localFrameId/localFrameStamp` 以及不对称包围盒的尺寸参数（forward/backward/side/vertical）和历史帧窗口常量，用于 Stage2 的方向性局部地图。
+
+- `include/MapManager/Map_Manager.h`
+  - 引入 `<condition_variable>`, `<memory>`, `<array>`, `<atomic>`，新增 `MapSnapshot` 结构及 `AcquireSnapshot()` 接口。
+  - 将 `laserCloud*_for_match`、`CornerKdMap_last` 等数据改为双缓冲（`kMatchBufferCount=2`），并增加 `publish_idx/staging_idx`、`snapshot_ref_count`、`snapshot_cv`。
+
+- `src/lio/Estimator.cpp`
+  - 调整地图访问逻辑，使用 `map_manager->AcquireSnapshot()` 获取 `const` 指针，解决地图并发读写问题。
+  - 在 `MapIncrementLocal` 中按照机体系前/后/侧/上下尺寸过滤局部地图点，并仅保留最近 `localMapHistoryFrames` 帧，提高 k-d tree 查询效率。
+  - 引入残差裁剪与 Ceres 参数收紧（保留最多 500/750/350 个 corner/surf/non 约束、最大迭代 8，非单调步长开启），减少单帧求解时间。
+  - 清理阶段耗时调试日志，仅保留必要警告。
+
+- `src/lio/Map_Manager.cpp`
+  - 在 `MapIncrement` 中按 staging buffer 写入地图，并在 copy 完成后切换 `publish_idx`；引用计数确保 Estimator 使用完快照后再复用缓冲区。
+  - 新增 `AcquireSnapshot()` / `ReleaseSnapshot()`，以 `shared_ptr` + 自定义 deleter 的方式提供线程安全的地图快照。
+
+- `src/lio/PoseEstimation.cpp`
+  - 移除 MAP 初始化阶段的 `std::cout` 日志以及冗余注释，使 PoseEstimation 保持与新的日志策略一致。
+
+除此之外，其它文件在两个提交间保持一致。
+

@@ -8,16 +8,27 @@
 #include <condition_variable>
 #include <memory>
 #include <array>
+#include <vector>
 #include <atomic>
+
+struct MapManagerConfig{
+  int width = 21;
+  int height = 11;
+  int depth = 21;
+  int local_window = 60;
+};
+
 class MAP_MANAGER{
     typedef pcl::PointXYZINormal PointType;
 public:
 
     std::mutex mtx_MapManager;
     /** \brief constructor of MAP_MANAGER */
-    MAP_MANAGER(const float& filter_corner, const float& filter_surf);
+    MAP_MANAGER(const float& filter_corner,
+                const float& filter_surf,
+                const MapManagerConfig& config = MapManagerConfig());
 
-    static size_t ToIndex(int i, int j, int k);
+    size_t ToIndex(int i, int j, int k) const;
 
     /** \brief transform float to int
   */
@@ -112,32 +123,34 @@ public:
     int get_laserCloudCenDepth_last(){
       return laserCloudCenDepth_last;
     }
-    static const int laserCloudWidth = 21;
-    static const int laserCloudHeight = 11;
-    static const int laserCloudDepth = 21;
-    static const int laserCloudNum = laserCloudWidth * laserCloudHeight * laserCloudDepth;//4851
     static const int kMatchBufferCount = 2;
-    pcl::PointCloud<PointType> laserCloudSurf_for_match[kMatchBufferCount][laserCloudNum];
-    pcl::PointCloud<PointType> laserCloudCorner_for_match[kMatchBufferCount][laserCloudNum];
-    pcl::PointCloud<PointType> laserCloudNonFeature_for_match[kMatchBufferCount][laserCloudNum];
+    const int laserCloudWidth;
+    const int laserCloudHeight;
+    const int laserCloudDepth;
+    const int laserCloudNum;
+    const int localMapWindowSize;
+
+    std::array<std::vector<pcl::PointCloud<PointType>>, kMatchBufferCount> laserCloudSurf_for_match;
+    std::array<std::vector<pcl::PointCloud<PointType>>, kMatchBufferCount> laserCloudCorner_for_match;
+    std::array<std::vector<pcl::PointCloud<PointType>>, kMatchBufferCount> laserCloudNonFeature_for_match;
 
 private:
-    int laserCloudCenWidth = 10;
-    int laserCloudCenHeight = 5;
-    int laserCloudCenDepth = 10;
+    int laserCloudCenWidth;
+    int laserCloudCenHeight;
+    int laserCloudCenDepth;
 
-    int laserCloudCenWidth_last = 10;
-    int laserCloudCenHeight_last = 5;
-    int laserCloudCenDepth_last = 10;
-    int laserCloudCenWidth_last_buf[kMatchBufferCount] = {10,10};
-    int laserCloudCenHeight_last_buf[kMatchBufferCount] = {5,5};
-    int laserCloudCenDepth_last_buf[kMatchBufferCount] = {10,10};
-    pcl::PointCloud<PointType>::Ptr laserCloudCornerArray[laserCloudNum];
-    pcl::PointCloud<PointType>::Ptr laserCloudSurfArray[laserCloudNum];
-    pcl::PointCloud<PointType>::Ptr laserCloudNonFeatureArray[laserCloudNum];
-    pcl::PointCloud<PointType>::Ptr laserCloudCornerArrayStack[laserCloudNum];
-    pcl::PointCloud<PointType>::Ptr laserCloudSurfArrayStack[laserCloudNum];
-    pcl::PointCloud<PointType>::Ptr laserCloudNonFeatureArrayStack[laserCloudNum];
+    int laserCloudCenWidth_last;
+    int laserCloudCenHeight_last;
+    int laserCloudCenDepth_last;
+    std::array<int, kMatchBufferCount> laserCloudCenWidth_last_buf;
+    std::array<int, kMatchBufferCount> laserCloudCenHeight_last_buf;
+    std::array<int, kMatchBufferCount> laserCloudCenDepth_last_buf;
+    std::vector<pcl::PointCloud<PointType>::Ptr> laserCloudCornerArray;
+    std::vector<pcl::PointCloud<PointType>::Ptr> laserCloudSurfArray;
+    std::vector<pcl::PointCloud<PointType>::Ptr> laserCloudNonFeatureArray;
+    std::vector<pcl::PointCloud<PointType>::Ptr> laserCloudCornerArrayStack;
+    std::vector<pcl::PointCloud<PointType>::Ptr> laserCloudSurfArrayStack;
+    std::vector<pcl::PointCloud<PointType>::Ptr> laserCloudNonFeatureArrayStack;
 
     pcl::VoxelGrid<PointType> downSizeFilterCorner;
     pcl::VoxelGrid<PointType> downSizeFilterSurf;
@@ -147,22 +160,17 @@ private:
     pcl::PointCloud<PointType>::Ptr laserCloudSurfFromMap;
     pcl::PointCloud<PointType>::Ptr laserCloudNonFeatureFromMap;
 
-    pcl::KdTreeFLANN<PointType>::Ptr laserCloudCornerKdMap[laserCloudNum];
-    pcl::KdTreeFLANN<PointType>::Ptr laserCloudSurfKdMap[laserCloudNum];
-    pcl::KdTreeFLANN<PointType>::Ptr laserCloudNonFeatureKdMap[laserCloudNum];
+    std::vector<pcl::KdTreeFLANN<PointType>::Ptr> laserCloudCornerKdMap;
+    std::vector<pcl::KdTreeFLANN<PointType>::Ptr> laserCloudSurfKdMap;
+    std::vector<pcl::KdTreeFLANN<PointType>::Ptr> laserCloudNonFeatureKdMap;
 
-    pcl::KdTreeFLANN<PointType> CornerKdMap_copy[laserCloudNum];
-    pcl::KdTreeFLANN<PointType> SurfKdMap_copy[laserCloudNum];
-    pcl::KdTreeFLANN<PointType> NonFeatureKdMap_copy[laserCloudNum];
+    std::array<std::vector<pcl::KdTreeFLANN<PointType>>, kMatchBufferCount> CornerKdMap_last;
+    std::array<std::vector<pcl::KdTreeFLANN<PointType>>, kMatchBufferCount> SurfKdMap_last;
+    std::array<std::vector<pcl::KdTreeFLANN<PointType>>, kMatchBufferCount> NonFeatureKdMap_last;
 
-    pcl::KdTreeFLANN<PointType> CornerKdMap_last[kMatchBufferCount][laserCloudNum];
-    pcl::KdTreeFLANN<PointType> SurfKdMap_last[kMatchBufferCount][laserCloudNum];
-    pcl::KdTreeFLANN<PointType> NonFeatureKdMap_last[kMatchBufferCount][laserCloudNum];
-
-    static const int localMapWindowSize = 60;
-    pcl::PointCloud<PointType>::Ptr localCornerMap[localMapWindowSize];
-    pcl::PointCloud<PointType>::Ptr localSurfMap[localMapWindowSize];
-    pcl::PointCloud<PointType>::Ptr localNonFeatureMap[localMapWindowSize];
+    std::vector<pcl::PointCloud<PointType>::Ptr> localCornerMap;
+    std::vector<pcl::PointCloud<PointType>::Ptr> localSurfMap;
+    std::vector<pcl::PointCloud<PointType>::Ptr> localNonFeatureMap;
 
     int localMapID = 0;
 

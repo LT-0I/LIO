@@ -16,6 +16,7 @@
 #include <queue>
 #include <iterator>
 #include <future>
+#include <memory>
 #include "MapManager/Map_Manager.h"
 #include "utils/ceresfunc.h"
 #include "IMUIntegrator/IMUIntegrator.h"
@@ -143,7 +144,9 @@ public:
 public:
 	/** \brief constructor of Estimator
 	*/
-	Estimator(const float& filter_corner, const float& filter_surf);
+	Estimator(const float& filter_corner,
+	          const float& filter_surf,
+	          const MapManagerConfig& map_config = MapManagerConfig());
 
 	~Estimator();
 
@@ -155,7 +158,7 @@ public:
 	* \param[in] edges: store costfunctions
 	* \param[in] m4d: lidar pose, represented by matrix 4X4
 	*/
-	void processPointToLine(std::vector<ceres::CostFunction *>& edges,
+	void processPointToLine(std::vector<std::unique_ptr<ceres::CostFunction>>& edges,
 							std::vector<FeatureLine>& vLineFeatures,
 							const pcl::PointCloud<PointType>::Ptr& laserCloudCorner,
 							const pcl::PointCloud<PointType>::Ptr& laserCloudCornerMap,
@@ -167,7 +170,7 @@ public:
 	* \param[in] edges: store costfunctions
 	* \param[in] m4d: lidar pose, represented by matrix 4X4
 	*/
-	void processPointToPlan(std::vector<ceres::CostFunction *>& edges,
+	void processPointToPlan(std::vector<std::unique_ptr<ceres::CostFunction>>& edges,
 							std::vector<FeaturePlan>& vPlanFeatures,
 							const pcl::PointCloud<PointType>::Ptr& laserCloudSurf,
 							const pcl::PointCloud<PointType>::Ptr& laserCloudSurfMap,
@@ -175,7 +178,7 @@ public:
 							const Eigen::Matrix4d& exTlb,
 							const Eigen::Matrix4d& m4d);
 
-	void processPointToPlanVec(std::vector<ceres::CostFunction *>& edges,
+	void processPointToPlanVec(std::vector<std::unique_ptr<ceres::CostFunction>>& edges,
 							   std::vector<FeaturePlanVec>& vPlanFeatures,
 							   const pcl::PointCloud<PointType>::Ptr& laserCloudSurf,
 							   const pcl::PointCloud<PointType>::Ptr& laserCloudSurfMap,
@@ -183,7 +186,7 @@ public:
 							   const Eigen::Matrix4d& exTlb,
 							   const Eigen::Matrix4d& m4d);
 				
-	void processNonFeatureICP(std::vector<ceres::CostFunction *>& edges,
+	void processNonFeatureICP(std::vector<std::unique_ptr<ceres::CostFunction>>& edges,
 							  std::vector<FeatureNon>& vNonFeatures,
 							  const pcl::PointCloud<PointType>::Ptr& laserCloudNonFeature,
 							  const pcl::PointCloud<PointType>::Ptr& laserCloudNonFeatureLocal,

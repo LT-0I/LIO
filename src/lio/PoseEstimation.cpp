@@ -605,8 +605,23 @@ int main(int argc, char** argv)
 
   tfBroadcaster = new tf::TransformBroadcaster();
 
+  int map_width = 21;
+  int map_height = 11;
+  int map_depth = 21;
+  int map_local_window = 60;
+  ros::param::param("~map_width", map_width, map_width);
+  ros::param::param("~map_height", map_height, map_height);
+  ros::param::param("~map_depth", map_depth, map_depth);
+  ros::param::param("~map_local_window", map_local_window, map_local_window);
+
+  MapManagerConfig map_config;
+  map_config.width = map_width;
+  map_config.height = map_height;
+  map_config.depth = map_depth;
+  map_config.local_window = map_local_window;
+
   laserCloudFullRes.reset(new pcl::PointCloud<PointType>);
-  estimator = new Estimator(filter_parameter_corner, filter_parameter_surf);
+  estimator = new Estimator(filter_parameter_corner, filter_parameter_surf, map_config);
 	lidarFrameList.reset(new std::list<Estimator::LidarFrame>);
 
   std::thread thread_process{process};

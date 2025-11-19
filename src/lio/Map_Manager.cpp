@@ -1,7 +1,57 @@
 #include "MapManager/Map_Manager.h"
 #include <fstream>
+#include <algorithm>
 
-MAP_MANAGER::MAP_MANAGER(const float& filter_corner, const float& filter_surf){
+MAP_MANAGER::MAP_MANAGER(const float& filter_corner,
+                         const float& filter_surf,
+                         const MapManagerConfig& config)
+    : laserCloudWidth(std::max(8, config.width)),
+      laserCloudHeight(std::max(3, config.height)),
+      laserCloudDepth(std::max(8, config.depth)),
+      laserCloudNum(laserCloudWidth * laserCloudHeight * laserCloudDepth),
+      localMapWindowSize(std::max(10, config.local_window)),
+      laserCloudCenWidth(laserCloudWidth / 2),
+      laserCloudCenHeight(laserCloudHeight / 2),
+      laserCloudCenDepth(laserCloudDepth / 2),
+      laserCloudCenWidth_last(laserCloudCenWidth),
+      laserCloudCenHeight_last(laserCloudCenHeight),
+      laserCloudCenDepth_last(laserCloudCenDepth),
+      laserCloudCornerArray(laserCloudNum),
+      laserCloudSurfArray(laserCloudNum),
+      laserCloudNonFeatureArray(laserCloudNum),
+      laserCloudCornerArrayStack(laserCloudNum),
+      laserCloudSurfArrayStack(laserCloudNum),
+      laserCloudNonFeatureArrayStack(laserCloudNum),
+      laserCloudCornerKdMap(laserCloudNum),
+      laserCloudSurfKdMap(laserCloudNum),
+      laserCloudNonFeatureKdMap(laserCloudNum),
+      localCornerMap(localMapWindowSize),
+      localSurfMap(localMapWindowSize),
+      localNonFeatureMap(localMapWindowSize){
+
+  laserCloudCenWidth_last_buf.fill(laserCloudCenWidth);
+  laserCloudCenHeight_last_buf.fill(laserCloudCenHeight);
+  laserCloudCenDepth_last_buf.fill(laserCloudCenDepth);
+
+  for(auto& buf : laserCloudCorner_for_match){
+    buf.resize(laserCloudNum);
+  }
+  for(auto& buf : laserCloudSurf_for_match){
+    buf.resize(laserCloudNum);
+  }
+  for(auto& buf : laserCloudNonFeature_for_match){
+    buf.resize(laserCloudNum);
+  }
+  for(auto& buf : CornerKdMap_last){
+    buf.resize(laserCloudNum);
+  }
+  for(auto& buf : SurfKdMap_last){
+    buf.resize(laserCloudNum);
+  }
+  for(auto& buf : NonFeatureKdMap_last){
+    buf.resize(laserCloudNum);
+  }
+
   for (int i = 0; i < laserCloudNum; i++) {
     laserCloudCornerArray[i].reset(new pcl::PointCloud<PointType>());
     laserCloudSurfArray[i].reset(new pcl::PointCloud<PointType>());
@@ -30,7 +80,7 @@ MAP_MANAGER::MAP_MANAGER(const float& filter_corner, const float& filter_surf){
   snapshot_ref_count[1].store(0);
 }
 
-size_t MAP_MANAGER::ToIndex(int i, int j, int k)  {
+size_t MAP_MANAGER::ToIndex(int i, int j, int k) const {
   return i + laserCloudDepth * j + laserCloudDepth * laserCloudWidth * k;
 }
 
@@ -123,9 +173,9 @@ void MAP_MANAGER::MapIncrement(const pcl::PointCloud<PointType>::Ptr& laserCloud
   int laserCloudCornerStackNum = laserCloudCornerStack->points.size();
   int laserCloudSurfStackNum = laserCloudSurfStack->points.size();
   int laserCloudNonFeatureStackNum = laserCloudNonFeatureStack->points.size();
-  bool CornerChangeFlag[laserCloudNum] = {false};
-  bool SurfChangeFlag[laserCloudNum] = {false};
-  bool NonFeatureChangeFlag[laserCloudNum] = {false};
+  std::vector<uint8_t> CornerChangeFlag(laserCloudNum, 0);
+  std::vector<uint8_t> SurfChangeFlag(laserCloudNum, 0);
+  std::vector<uint8_t> NonFeatureChangeFlag(laserCloudNum, 0);
   PointType pointSel;
   for (int i = 0; i < laserCloudCornerStackNum; i++) {
 
@@ -145,7 +195,7 @@ void MAP_MANAGER::MapIncrement(const pcl::PointCloud<PointType>::Ptr& laserCloud
         cubeK < laserCloudHeight) {
       size_t cubeInd = ToIndex(cubeI, cubeJ, cubeK);
       laserCloudCornerArray[cubeInd]->push_back(pointSel);
-      CornerChangeFlag[cubeInd] = true;
+      CornerChangeFlag[cubeInd] = 1;
     }
   }
 
@@ -164,7 +214,7 @@ void MAP_MANAGER::MapIncrement(const pcl::PointCloud<PointType>::Ptr& laserCloud
         cubeK >= 0 && cubeK < laserCloudHeight) {
       size_t cubeInd = ToIndex(cubeI, cubeJ, cubeK);
       laserCloudSurfArray[cubeInd]->push_back(pointSel);
-      SurfChangeFlag[cubeInd] = true;
+      SurfChangeFlag[cubeInd] = 1;
     }
   }
 
@@ -183,7 +233,7 @@ void MAP_MANAGER::MapIncrement(const pcl::PointCloud<PointType>::Ptr& laserCloud
         cubeK >= 0 && cubeK < laserCloudHeight) {
       size_t cubeInd = ToIndex(cubeI, cubeJ, cubeK);
       laserCloudNonFeatureArray[cubeInd]->push_back(pointSel);
-      NonFeatureChangeFlag[cubeInd] = true;
+      NonFeatureChangeFlag[cubeInd] = 1;
     }
   }
 
@@ -238,14 +288,7 @@ void MAP_MANAGER::MapIncrement(const pcl::PointCloud<PointType>::Ptr& laserCloud
   }
 
   t4 = clock();
-  std::unique_lock<std::mutex> locker(mtx_MapManager);
-  for(int i = 0; i < laserCloudNum; i++){
-    CornerKdMap_copy[i] = *laserCloudCornerKdMap[i];
-    SurfKdMap_copy[i] = *laserCloudSurfKdMap[i];
-    NonFeatureKdMap_copy[i] = *laserCloudNonFeatureKdMap[i];
-  }
-
-  locker.unlock();
+  // Removed historical copy buffers to reduce memory footprint
   t5 = clock();
 
   currentUpdatePos ++;
@@ -555,12 +598,12 @@ std::shared_ptr<MAP_MANAGER::MapSnapshot> MAP_MANAGER::AcquireSnapshot(){
   const int idx = publish_idx;
   snapshot_ref_count[idx]++;
   MapSnapshot* snapshot = new MapSnapshot{
-    CornerKdMap_last[idx],
-    SurfKdMap_last[idx],
-    NonFeatureKdMap_last[idx],
-    laserCloudCorner_for_match[idx],
-    laserCloudSurf_for_match[idx],
-    laserCloudNonFeature_for_match[idx],
+    CornerKdMap_last[idx].data(),
+    SurfKdMap_last[idx].data(),
+    NonFeatureKdMap_last[idx].data(),
+    laserCloudCorner_for_match[idx].data(),
+    laserCloudSurf_for_match[idx].data(),
+    laserCloudNonFeature_for_match[idx].data(),
     laserCloudCenWidth_last_buf[idx],
     laserCloudCenHeight_last_buf[idx],
     laserCloudCenDepth_last_buf[idx],

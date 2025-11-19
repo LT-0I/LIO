@@ -57,6 +57,31 @@
 - **改动内容**：删除之前为性能压测临时加入的 `ROS_INFO` 打印，保留 `ROS_WARN` 等必要日志。
 - **作用**：在确认优化达标后恢复干净的运行输出，避免额外的日志 IO 开销，也方便在飞行中监控真正的异常信息。
 
+## 11. `943b8fe` “MapManagerConfig 参数化 + 内存结构瘦身”
+- **改动内容**：
+  - 在 `config/*.yaml` 与 `PoseEstimation` 中新增 `map_width/height/depth/local_window` 参数，并通过 `MapManagerConfig` 传入 `Estimator/MapManager` 构造函数，使不同隧道场景可以快速调节地图栅格尺寸。
+  - `MapManager` 内的 `laserCloud*Array`、KD-tree 与匹配缓存改为 `std::vector` 动态分配，双缓冲尺寸跟随配置而定；同时引入 `snapshot_ref_count` 自旋锁、条件变量，减少固定 4851 个格子的静态内存占用。
+  - `Estimator` 构造函数同步调整，初始化局部地图窗口与 KD-Tree 结构时使用配置尺寸，并在 `MapIncrementLocal` 里复用这些 `std::vector` 容器，避免大块静态数组常驻。
+- **作用**：可通过配置文件裁剪地图体素数量，把原先固定网格改为“任务驱动”的动态大小，同时借助 `std::vector`/shared snapshot 降低常驻内存，并使得 `MapManager` 的更新、快照流程在不同栅格尺寸下都能稳定运行。
+
+## 12. `3fee899` “残差筛选参数可配置化”
+- **改动内容**：
+  - 新增 `EstimatorResidualConfig` 结构，并在 `Estimator` 中实现按残差误差从大到小排序的统一筛选函数，将保留数量（corner/surf/non）与误差阈值作为配置输入，而非写死在代码里。
+  - 在 `PoseEstimation` 中从 YAML 读取 `max_corner_residuals`、`max_surf_residuals`、`max_non_residuals`、`feature_error_threshold`，构造 `Estimator` 时传入；三套传感器配置文件均补充了默认值。
+  - 残差筛选阶段与 Ceres 求解新增统计日志，便于调参时观察不同配置下的保留数量与收敛情况。
+- **作用**：让不同任务/隧道宽度下可以通过改 YAML 即调节残差密度，快速在精度与性能间取舍，同时统一筛选逻辑提升代码可维护性。
+
+## 13. `5293f2f` “Corner 残差回退到均匀抽样 + 构建统计”
+- **改动内容**：
+  - 将 `selectAndAddResiduals` 回退为旧版均匀抽样逻辑（按 stride 取样），但保留 `EstimatorResidualConfig` 提供的角/面/非特征上限与误差阈值；角点残差在 `FeatureLine` 中记录 `from_global` 标记。
+  - 新增 `log_feature_counts` 配置项：为每一轮优化记录候选/保留残差数量，并细分 corner 的“来自地图 KD-tree / 来自局部 KD-tree”的数量，同时输出 `FeatureBuildStats`（KD-tree 命中数、特征判定通过/拒绝次数等）。
+  - `PoseEstimation`、三套 `config/*.yaml` 均可控制是否打印这些统计，方便后续用统一脚本对 rosbag 的全帧日志做分析。
+- **验证结论**：
+  - **隧道退化场景**：角点候选虽少（~235/帧），但均匀抽样保证了开局就有足够约束，轨迹不再“开头飞”；日志显示全局角点通过率约 59%，后续可据此调阈值。
+  - **室内/室外停车场、球场**：每帧角点多达 300–1000 个，统计证明筛选后仍保留大量角点且实时性可控（室外停车场偶有短时延迟但能追上）。说明新策略兼容高密度与低密度点云。
+  - **旧版误差排序的风险**：“开头飞、跑一会儿才稳” 的现象只在误差排序方案中出现（隧道角点误差太小被全部剔除）；回退均匀抽样后，这种隐患消失。
+- **作用**：恢复隧道场景的稳定性，同时通过日志量化角点来源与 KD-tree 判定情况，为后续制定“自适应角点保底/阈值放宽”等策略提供依据；也确保其他场景在不调参的情况下继续稳定运行。
+
 ---
 
 > 如需查看某个提交的具体 diff，可直接在仓库中运行 `git show <commit>`。本文件仅概述改动动机与收益，以便团队成员快速了解版本演进。

@@ -5,7 +5,9 @@
 
 Estimator::Estimator(const float& filter_corner,
                      const float& filter_surf,
-                     const MapManagerConfig& map_config){
+                     const MapManagerConfig& map_config,
+                     const EstimatorResidualConfig& residual_config)
+: residual_config_(residual_config){
   laserCloudCornerFromLocal.reset(new pcl::PointCloud<PointType>);
   laserCloudSurfFromLocal.reset(new pcl::PointCloud<PointType>);
   laserCloudNonFeatureFromLocal.reset(new pcl::PointCloud<PointType>);
@@ -1095,69 +1097,60 @@ void Estimator::Estimate(std::list<LidarFrame>& lidarFrameList,
                                  last_marginalization_parameter_blocks);
       }
 
-      int cntSurf = 0;
-      int cntCorner = 0;
-      int cntNon = 0;
-      const int maxCornerResidualsPerFrame = 600;
-      const int maxSurfResidualsPerFrame = 900;
-      const int maxNonResidualsPerFrame = 450;
-      auto shouldKeepFeature = [](int idx, int total, int kept, int limit) -> bool {
-        if(limit <= 0 || total <= limit) return true;
-        if(kept >= limit) return false;
-        const int stride = (total + limit - 1) / limit;
-        return (idx % stride) == 0;
-      };
+    int cntSurf = 0;
+    int cntCorner = 0;
+    int cntNon = 0;
+    const int maxCornerResidualsPerFrame = 500;
+    const int maxSurfResidualsPerFrame = 750;
+    const int maxNonResidualsPerFrame = 350;
+    const double featureErrorThreshold = residual_config_.feature_error_threshold;
+    auto selectAndAddResiduals =
+        [&](std::vector<std::unique_ptr<ceres::CostFunction>>& edges,
+            auto& features,
+            int limit,
+            int f,
+            int& globalCount){
+          if(edges.empty()) return;
+          std::vector<int> candidates;
+          candidates.reserve(edges.size());
+          for(size_t idx=0; idx<edges.size(); ++idx){
+            if(edges[idx] && std::fabs(features[idx].error) > featureErrorThreshold){
+              candidates.emplace_back(static_cast<int>(idx));
+            }else{
+              features[idx].valid = false;
+              edges[idx].reset();
+            }
+          }
+          if(candidates.empty()) return;
+          std::sort(candidates.begin(), candidates.end(), [&](int a, int b){
+            return std::fabs(features[a].error) > std::fabs(features[b].error);
+          });
+          if(limit > 0 && static_cast<int>(candidates.size()) > limit){
+            candidates.resize(limit);
+          }
+          std::vector<char> selected(edges.size(), 0);
+          for(int idx : candidates){
+            selected[idx] = 1;
+          }
+          for(size_t idx=0; idx<edges.size(); ++idx){
+            if(selected[idx] && edges[idx]){
+              problem.AddResidualBlock(edges[idx].get(), loss_function, para_PR[f]);
+              edges[idx].release();
+              features[idx].valid = true;
+            }else{
+              features[idx].valid = false;
+              edges[idx].reset();
+            }
+          }
+          globalCount += static_cast<int>(candidates.size());
+        };
       if(windowSize == SLIDEWINDOWSIZE) {
         thres_dist = 1.0;
         if(iterOpt == 0){
           for(int f=0; f<windowSize; ++f){
-            const int totalCorner = edgesLine[f].size();
-            int keptCornerLocal = 0;
-            for(size_t idx=0; idx<edgesLine[f].size(); ++idx){
-              if(std::fabs(vLineFeatures[f][idx].error) > 1e-5 &&
-                 shouldKeepFeature(static_cast<int>(idx), totalCorner, keptCornerLocal, maxCornerResidualsPerFrame)){
-                problem.AddResidualBlock(edgesLine[f][idx].get(), loss_function, para_PR[f]);
-                edgesLine[f][idx].release();
-                vLineFeatures[f][idx].valid = true;
-                ++keptCornerLocal;
-                ++cntCorner;
-              }else{
-                edgesLine[f][idx].reset();
-                vLineFeatures[f][idx].valid = false;
-              }
-            }
-
-            const int totalSurf = edgesPlan[f].size();
-            int keptSurfLocal = 0;
-            for(size_t idx=0; idx<edgesPlan[f].size(); ++idx){
-              if(std::fabs(vPlanFeatures[f][idx].error) > 1e-5 &&
-                 shouldKeepFeature(static_cast<int>(idx), totalSurf, keptSurfLocal, maxSurfResidualsPerFrame)){
-                problem.AddResidualBlock(edgesPlan[f][idx].get(), loss_function, para_PR[f]);
-                edgesPlan[f][idx].release();
-                vPlanFeatures[f][idx].valid = true;
-                ++keptSurfLocal;
-                ++cntSurf;
-              }else{
-                edgesPlan[f][idx].reset();
-                vPlanFeatures[f][idx].valid = false;
-              }
-            }
-
-            const int totalNon = edgesNon[f].size();
-            int keptNonLocal = 0;
-            for(size_t idx=0; idx<edgesNon[f].size(); ++idx){
-              if(std::fabs(vNonFeatures[f][idx].error) > 1e-5 &&
-                 shouldKeepFeature(static_cast<int>(idx), totalNon, keptNonLocal, maxNonResidualsPerFrame)){
-                problem.AddResidualBlock(edgesNon[f][idx].get(), loss_function, para_PR[f]);
-                edgesNon[f][idx].release();
-                vNonFeatures[f][idx].valid = true;
-                ++keptNonLocal;
-                ++cntNon;
-              }else{
-                edgesNon[f][idx].reset();
-                vNonFeatures[f][idx].valid = false;
-              }
-            }
+          selectAndAddResiduals(edgesLine[f], vLineFeatures[f], maxCornerResidualsPerFrame, f, cntCorner);
+          selectAndAddResiduals(edgesPlan[f], vPlanFeatures[f], maxSurfResidualsPerFrame, f, cntSurf);
+          selectAndAddResiduals(edgesNon[f], vNonFeatures[f], maxNonResidualsPerFrame, f, cntNon);
           }
         }else{
           for(int f=0; f<windowSize; ++f){
@@ -1204,54 +1197,14 @@ void Estimator::Estimate(std::list<LidarFrame>& lidarFrameList,
             thres_dist = 1.0;
           }
           for(int f=0; f<windowSize; ++f){
-            const int totalCorner = edgesLine[f].size();
-            int keptCornerLocal = 0;
-            for(size_t idx=0; idx<edgesLine[f].size(); ++idx){
-              if(std::fabs(vLineFeatures[f][idx].error) > 1e-5 &&
-                 shouldKeepFeature(static_cast<int>(idx), totalCorner, keptCornerLocal, maxCornerResidualsPerFrame)){
-                problem.AddResidualBlock(edgesLine[f][idx].get(), loss_function, para_PR[f]);
-                edgesLine[f][idx].release();
-                vLineFeatures[f][idx].valid = true;
-                ++keptCornerLocal;
-                ++cntCorner;
-              }else{
-                edgesLine[f][idx].reset();
-                vLineFeatures[f][idx].valid = false;
-              }
-            }
-            const int totalSurf = edgesPlan[f].size();
-            int keptSurfLocal = 0;
-            for(size_t idx=0; idx<edgesPlan[f].size(); ++idx){
-              if(std::fabs(vPlanFeatures[f][idx].error) > 1e-5 &&
-                 shouldKeepFeature(static_cast<int>(idx), totalSurf, keptSurfLocal, maxSurfResidualsPerFrame)){
-                problem.AddResidualBlock(edgesPlan[f][idx].get(), loss_function, para_PR[f]);
-                edgesPlan[f][idx].release();
-                vPlanFeatures[f][idx].valid = true;
-                ++keptSurfLocal;
-                ++cntSurf;
-              }else{
-                edgesPlan[f][idx].reset();
-                vPlanFeatures[f][idx].valid = false;
-              }
-            }
-
-            const int totalNon = edgesNon[f].size();
-            int keptNonLocal = 0;
-            for(size_t idx=0; idx<edgesNon[f].size(); ++idx){
-              if(std::fabs(vNonFeatures[f][idx].error) > 1e-5 &&
-                 shouldKeepFeature(static_cast<int>(idx), totalNon, keptNonLocal, maxNonResidualsPerFrame)){
-                problem.AddResidualBlock(edgesNon[f][idx].get(), loss_function, para_PR[f]);
-                edgesNon[f][idx].release();
-                vNonFeatures[f][idx].valid = true;
-                ++keptNonLocal;
-                ++cntNon;
-              }else{
-                edgesNon[f][idx].reset();
-                vNonFeatures[f][idx].valid = false;
-              }
-            }
+          selectAndAddResiduals(edgesLine[f], vLineFeatures[f], maxCornerResidualsPerFrame, f, cntCorner);
+          selectAndAddResiduals(edgesPlan[f], vPlanFeatures[f], maxSurfResidualsPerFrame, f, cntSurf);
+          selectAndAddResiduals(edgesNon[f], vNonFeatures[f], maxNonResidualsPerFrame, f, cntNon);
           }
       }
+
+    ROS_INFO("Estimator residual kept iter %d: corner=%d surf=%d non=%d",
+             iterOpt, cntCorner, cntSurf, cntNon);
 
       ceres::Solver::Options options;
       options.linear_solver_type = ceres::DENSE_SCHUR;
@@ -1263,9 +1216,17 @@ void Estimator::Estimate(std::list<LidarFrame>& lidarFrameList,
       options.use_nonmonotonic_steps = true;
       options.max_consecutive_nonmonotonic_steps = 3;
       options.minimizer_progress_to_stdout = false;
-      const unsigned int ceres_threads = std::max(1u, std::thread::hardware_concurrency());
-      options.num_threads = static_cast<int>(ceres_threads);
-      ceres::Solve(options, &problem, &summary);
+    const unsigned int ceres_threads = std::max(1u, std::thread::hardware_concurrency());
+    options.num_threads = static_cast<int>(ceres_threads);
+    ROS_INFO("Estimator ceres solve start %.6f", ros::Time::now().toSec());
+    ceres::Solver::Summary summary;
+    ceres::Solve(options, &problem, &summary);
+    ROS_INFO("Estimator ceres summary iter %d: steps=%d initial_cost=%.6f final_cost=%.6f",
+             iterOpt,
+             static_cast<int>(summary.iterations.size()),
+             summary.initial_cost,
+             summary.final_cost);
+    ROS_INFO("Estimator ceres solve end %.6f", ros::Time::now().toSec());
     } // problem scope
 
     double2vector(lidarFrameList);

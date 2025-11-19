@@ -609,10 +609,18 @@ int main(int argc, char** argv)
   int map_height = 11;
   int map_depth = 21;
   int map_local_window = 60;
+  int max_corner_residuals = 500;
+  int max_surf_residuals = 750;
+  int max_non_residuals = 350;
+  double feature_error_threshold = 1e-5;
   ros::param::param("~map_width", map_width, map_width);
   ros::param::param("~map_height", map_height, map_height);
   ros::param::param("~map_depth", map_depth, map_depth);
   ros::param::param("~map_local_window", map_local_window, map_local_window);
+  ros::param::param("~max_corner_residuals", max_corner_residuals, max_corner_residuals);
+  ros::param::param("~max_surf_residuals", max_surf_residuals, max_surf_residuals);
+  ros::param::param("~max_non_residuals", max_non_residuals, max_non_residuals);
+  ros::param::param("~feature_error_threshold", feature_error_threshold, feature_error_threshold);
 
   MapManagerConfig map_config;
   map_config.width = map_width;
@@ -620,8 +628,14 @@ int main(int argc, char** argv)
   map_config.depth = map_depth;
   map_config.local_window = map_local_window;
 
+  EstimatorResidualConfig residual_config;
+  residual_config.max_corner_residuals = max_corner_residuals;
+  residual_config.max_surf_residuals = max_surf_residuals;
+  residual_config.max_non_residuals = max_non_residuals;
+  residual_config.feature_error_threshold = feature_error_threshold;
+
   laserCloudFullRes.reset(new pcl::PointCloud<PointType>);
-  estimator = new Estimator(filter_parameter_corner, filter_parameter_surf, map_config);
+  estimator = new Estimator(filter_parameter_corner, filter_parameter_surf, map_config, residual_config);
 	lidarFrameList.reset(new std::list<Estimator::LidarFrame>);
 
   std::thread thread_process{process};

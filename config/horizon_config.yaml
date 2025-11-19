@@ -21,3 +21,9 @@ map_width: 21
 map_height: 11
 map_depth: 21
 map_local_window: 60
+
+# residual selection configuration
+max_corner_residuals: 500
+max_surf_residuals: 750
+max_non_residuals: 350
+feature_error_threshold: 1.0e-5

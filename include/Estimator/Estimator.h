@@ -22,6 +22,13 @@
 #include "IMUIntegrator/IMUIntegrator.h"
 #include <chrono>
 
+struct EstimatorResidualConfig{
+	int max_corner_residuals = 500;
+	int max_surf_residuals = 750;
+	int max_non_residuals = 350;
+	double feature_error_threshold = 1e-5;
+};
+
 class Estimator{
 	typedef pcl::PointXYZINormal PointType;
 public:
@@ -146,7 +153,8 @@ public:
 	*/
 	Estimator(const float& filter_corner,
 	          const float& filter_surf,
-	          const MapManagerConfig& map_config = MapManagerConfig());
+	          const MapManagerConfig& map_config = MapManagerConfig(),
+	          const EstimatorResidualConfig& residual_config = EstimatorResidualConfig());
 
 	~Estimator();
 
@@ -233,6 +241,7 @@ public:
 						   const Eigen::Matrix4d& transformTobeMapped);
 
 private:
+	EstimatorResidualConfig residual_config_;
 	/** \brief store map points */
 	MAP_MANAGER* map_manager;
 

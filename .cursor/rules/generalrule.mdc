@@ -1,0 +1,24 @@
+---
+alwaysApply: true
+---
+# LIO-Livox Development & Optimization Protocol with MCP
+
+## 1. External Research Phase (GitHub MCP)
+Before proposing complex optimizations (especially regarding Memory or Speed):
+- **MANDATORY:** Use the `github` tool to search the `Livox-SDK/LIO-Livox` repository and its major forks (like `hku-mars/FAST_LIO`) for related Issues or Pull Requests.
+- **Query Examples:**
+  - "search_issues: 'memory leak' in LIO-Livox"
+  - "search_code: 'OpenMP' usage in scan registration"
+- **Goal:** Check if the performance bottleneck is a known issue with a community-verified fix. Don't reinvent the wheel if a fix exists.
+
+## 2. Internal Consistency Phase (Context7 MCP)
+When generating C++ code, specifically for SLAM math and memory management:
+- **MANDATORY:** Invoke `context7` (or `read_codebase_context`) to inspect the exact class definitions of the objects being modified (e.g., `PointCloudXYZ`, `StateVector`).
+- **Verification Targets:**
+  - **Eigen Alignment:** Ensure `EIGEN_MAKE_ALIGNED_OPERATOR_NEW` is preserved in structs.
+  - **Pointer Types:** Verify if the project uses `pcl::PointCloud::Ptr` or raw pointers. Do not mix them.
+  - **Dependencies:** Ensure included headers exist in the current context via `context7`.
+
+## 3. Optimization Constraints
+- If `github` search suggests a solution, adapt it to our specific codebase style using `context7` verification.
+- Always prioritize **Algorithmic Correctness** (verified via Context7) over experimental speedups.

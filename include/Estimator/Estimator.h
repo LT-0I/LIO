@@ -179,7 +179,8 @@ public:
 	Estimator(const float& filter_corner,
 	          const float& filter_surf,
 	          const MapManagerConfig& map_config = MapManagerConfig(),
-	          const EstimatorResidualConfig& residual_config = EstimatorResidualConfig());
+	          const EstimatorResidualConfig& residual_config = EstimatorResidualConfig(),
+	          bool log_module_timing = false);
 
 	~Estimator();
 
@@ -329,6 +330,7 @@ private:
 	double plan_weight_tan = 0.0;
 	double thres_dist = 1.0;
 	double corner_eigen_ratio_ = 3.0;
+	bool log_module_timing_ = false;
 };
 
 #endif //LIO_LIVOX_ESTIMATOR_H

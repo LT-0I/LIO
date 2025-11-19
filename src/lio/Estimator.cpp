@@ -6,8 +6,10 @@
 Estimator::Estimator(const float& filter_corner,
                      const float& filter_surf,
                      const MapManagerConfig& map_config,
-                     const EstimatorResidualConfig& residual_config)
-: residual_config_(residual_config){
+                     const EstimatorResidualConfig& residual_config,
+                     bool log_module_timing)
+: residual_config_(residual_config),
+  log_module_timing_(log_module_timing){
   corner_eigen_ratio_ = residual_config_.adaptive_corner.default_eigen_ratio;
   laserCloudCornerFromLocal.reset(new pcl::PointCloud<PointType>);
   laserCloudSurfFromLocal.reset(new pcl::PointCloud<PointType>);
@@ -931,7 +933,13 @@ void Estimator::EstimateLidarPose(std::list<LidarFrame>& lidarFrameList,
   }
   if ( ((laserCloudCornerFromMapNum >= 0 && laserCloudSurfFromMapNum > 100) || 
        (laserCloudCornerFromLocalNum >= 0 && laserCloudSurfFromLocalNum > 100))) {
+    if(log_module_timing_){
+      ROS_INFO("[Timing] Estimator::Estimate start %.6f", ros::Time::now().toSec());
+    }
     Estimate(lidarFrameList, exTlb, gravity);
+    if(log_module_timing_){
+      ROS_INFO("[Timing] Estimator::Estimate end   %.6f", ros::Time::now().toSec());
+    }
   }
 
   transformTobeMapped = Eigen::Matrix4d::Identity();
@@ -946,7 +954,13 @@ void Estimator::EstimateLidarPose(std::list<LidarFrame>& lidarFrameList,
   laserCloudCornerFromLocal->clear();
   laserCloudSurfFromLocal->clear();
   laserCloudNonFeatureFromLocal->clear();
+  if(log_module_timing_){
+    ROS_INFO("[Timing] MapManager update start %.6f", ros::Time::now().toSec());
+  }
   MapIncrementLocal(laserCloudCornerForMap,laserCloudSurfForMap,laserCloudNonFeatureForMap,transformTobeMapped);
+  if(log_module_timing_){
+    ROS_INFO("[Timing] MapManager update end   %.6f", ros::Time::now().toSec());
+  }
   locker.unlock();
 }
 
@@ -973,7 +987,13 @@ void Estimator::Estimate(std::list<LidarFrame>& lidarFrameList,
   kdtreeSurfFromLocal->setInputCloud(laserCloudSurfFromLocal);
   kdtreeNonFeatureFromLocal->setInputCloud(laserCloudNonFeatureFromLocal);
 
+  if(log_module_timing_){
+    ROS_INFO("[Timing] MapManager snapshot start %.6f", ros::Time::now().toSec());
+  }
   auto map_snapshot = map_manager->AcquireSnapshot();
+  if(log_module_timing_){
+    ROS_INFO("[Timing] MapManager snapshot end   %.6f", ros::Time::now().toSec());
+  }
   for(int i = 0; i < 4851; i++){
     CornerKdMap[i] = map_snapshot->corner_kd + i;
     SurfKdMap[i] = map_snapshot->surf_kd + i;
@@ -1029,6 +1049,9 @@ void Estimator::Estimate(std::list<LidarFrame>& lidarFrameList,
     const unsigned int hw_threads = std::max(1u, std::thread::hardware_concurrency());
     const int worker_count = std::min<int>(windowSize, std::max(1u, hw_threads));
     const int frames_per_worker = std::max(1, (windowSize + worker_count - 1) / worker_count);
+    if(log_module_timing_){
+      ROS_INFO("[Timing] Residual build start %.6f", ros::Time::now().toSec());
+    }
     auto process_frames = [&](int start, int end){
       for(int f=start; f<end; ++f) {
         edgesLine[f].clear();
@@ -1080,6 +1103,9 @@ void Estimator::Estimate(std::list<LidarFrame>& lidarFrameList,
     }
     for(auto& worker : residual_workers){
       worker.join();
+    }
+    if(log_module_timing_){
+      ROS_INFO("[Timing] Residual build end   %.6f", ros::Time::now().toSec());
     }
 
     double avg_global_kd = residual_config_.adaptive_corner.low_feature_global_kd + 1.0;
@@ -1417,8 +1443,14 @@ void Estimator::Estimate(std::list<LidarFrame>& lidarFrameList,
       options.minimizer_progress_to_stdout = false;
     const unsigned int ceres_threads = std::max(1u, std::thread::hardware_concurrency());
     options.num_threads = static_cast<int>(ceres_threads);
+    if(log_module_timing_){
+      ROS_INFO("[Timing] Ceres solve start %.6f", ros::Time::now().toSec());
+    }
     ceres::Solver::Summary summary;
     ceres::Solve(options, &problem, &summary);
+    if(log_module_timing_){
+      ROS_INFO("[Timing] Ceres solve end   %.6f", ros::Time::now().toSec());
+    }
     } // problem scope
 
     double2vector(lidarFrameList);
@@ -1430,6 +1462,9 @@ void Estimator::Estimate(std::list<LidarFrame>& lidarFrameList,
     double deltaT = (t_before_opti - t_after_opti).norm();
 
     if (deltaR < 0.05 && deltaT < 0.05 || (iterOpt+1) == max_iters){
+      if(log_module_timing_){
+        ROS_INFO("[Timing] Marginalization start %.6f", ros::Time::now().toSec());
+      }
       ROS_INFO("Frame: %u", frame_count++);
       if(windowSize != SLIDEWINDOWSIZE) break;
       // apply marginalization
@@ -1547,6 +1582,9 @@ void Estimator::Estimate(std::list<LidarFrame>& lidarFrameList,
       delete last_marginalization_info;
       last_marginalization_info = marginalization_info;
       last_marginalization_parameter_blocks = parameter_blocks;
+      if(log_module_timing_){
+        ROS_INFO("[Timing] Marginalization end   %.6f", ros::Time::now().toSec());
+      }
       break;
     }
 

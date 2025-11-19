@@ -31,6 +31,8 @@ fi
 THRESHOLD_MB=1000
 INTERVAL=${1:-1}
 LOG_DIR=${2:-/home/jetson/ws_livox/src/LIO/监控}
+SESSION_STAMP=$(date '+%Y%m%d_%H%M%S')
+RSS_LOG_PATH="${LOG_DIR}/pose_rss_${SESSION_STAMP}.csv"
 
 mkdir -p "${LOG_DIR}"
 
@@ -41,12 +43,16 @@ if [[ -z "${PID}" ]]; then
 fi
 
 echo "监控 PoseEstimation (PID=${PID})，阈值=${THRESHOLD_MB}MB，采样间隔=${INTERVAL}s，日志目录=${LOG_DIR}"
+echo "timestamp,rss_mb" > "${RSS_LOG_PATH}"
+echo "RSS 采样文件: ${RSS_LOG_PATH}"
 
 while kill -0 "${PID}" 2>/dev/null; do
   rss_kb=$(ps -o rss= -p "${PID}" | tr -d '[:space:]')
   [[ -z "${rss_kb}" ]] && break
   rss_mb=$((rss_kb / 1024))
-  printf "[%s] RSS=%dMB\r" "$(date '+%H:%M:%S')" "${rss_mb}"
+  timestamp="$(date '+%Y-%m-%d %H:%M:%S')"
+  printf "[%s] RSS=%dMB\r" "${timestamp}" "${rss_mb}"
+  printf "%s,%d\n" "${timestamp}" "${rss_mb}" >> "${RSS_LOG_PATH}"
 
   if (( rss_mb >= THRESHOLD_MB )); then
     stamp=$(date '+%Y%m%d_%H%M%S')
@@ -57,7 +63,15 @@ while kill -0 "${PID}" 2>/dev/null; do
         -ex "thread apply all bt" \
         -ex "detach" \
         -ex "quit" &> "${log_path}"; then
+      {
+        echo ""
+        echo "==== RSS 采样信息 ===="
+        echo "采样文件: ${RSS_LOG_PATH}"
+        echo "最近 20 条样本:"
+        tail -n 20 "${RSS_LOG_PATH}"
+      } >> "${log_path}"
       echo "栈信息已保存到 ${log_path}"
+      echo "RSS 采样记录保存在 ${RSS_LOG_PATH}"
       exit 0
     else
       echo "gdb 捕获失败，请确认 gdb 可用并重新运行脚本。"

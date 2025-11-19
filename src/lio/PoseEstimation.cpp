@@ -6,6 +6,7 @@ bool LidarIMUInited = false;
 boost::shared_ptr<std::list<Estimator::LidarFrame>> lidarFrameList;
 pcl::PointCloud<PointType>::Ptr laserCloudFullRes;
 Estimator* estimator;
+bool log_module_timing = false;
 
 ros::Publisher pubLaserOdometry;
 ros::Publisher pubLaserOdometryPath;
@@ -411,7 +412,13 @@ void process(){
 	    	if(!LidarIMUInited) {
 	    		// if get IMU msg successfully, use gyro integration to update delta_Rl
 			    lidarFrame.imuIntegrator.PushIMUMsg(vimuMsg);
+			    if(log_module_timing){
+			      ROS_INFO("[Timing] IMU_GyroIntegration start %.6f", ros::Time::now().toSec());
+			    }
 			    lidarFrame.imuIntegrator.GyroIntegration(time_last_lidar);
+			    if(log_module_timing){
+			      ROS_INFO("[Timing] IMU_GyroIntegration end   %.6f", ros::Time::now().toSec());
+			    }
 			    delta_Rb = lidarFrame.imuIntegrator.GetDeltaQ().toRotationMatrix();
 			    delta_Rl = exTlb.topLeftCorner(3, 3) * delta_Rb * exTlb.topLeftCorner(3, 3).transpose();
 
@@ -426,6 +433,9 @@ void process(){
 		    }else{
 			    // if get IMU msg successfully, use pre-integration to update delta lidar pose
 			    lidarFrame.imuIntegrator.PushIMUMsg(vimuMsg);
+			    if(log_module_timing){
+			      ROS_INFO("[Timing] IMU_PreIntegration start %.6f", ros::Time::now().toSec());
+			    }
 			    lidarFrame.imuIntegrator.PreIntegration(lidarFrameList->back().timeStamp, lidarFrameList->back().bg, lidarFrameList->back().ba);
 
 			    const Eigen::Vector3d& Pwbpre = lidarFrameList->back().P;
@@ -453,6 +463,9 @@ void process(){
 			    delta_tl = Qwlpre.conjugate() * (Pwl - Pwlpre);
 			    delta_Rb = dQ.toRotationMatrix();
 			    delta_tb = dP;
+			    if(log_module_timing){
+			      ROS_INFO("[Timing] IMU_PreIntegration end   %.6f", ros::Time::now().toSec());
+			    }
 
 			    lidarFrameList->push_back(lidarFrame);
 			    lidarFrameList->pop_front();
@@ -473,7 +486,13 @@ void process(){
 	    	}
 	    }
 
+	    if(log_module_timing){
+	      ROS_INFO("[Timing] RemoveDistortion start %.6f", ros::Time::now().toSec());
+	    }
 	    RemoveLidarDistortion(laserCloudFullRes, delta_Rl, delta_tl);
+	    if(log_module_timing){
+	      ROS_INFO("[Timing] RemoveDistortion end   %.6f", ros::Time::now().toSec());
+	    }
 
       // optimize current lidar pose with IMU
       estimator->EstimateLidarPose(*lidar_list, exTlb, GravityVector, debugInfo);
@@ -630,6 +649,7 @@ int main(int argc, char** argv)
   ros::param::param("~max_non_residuals", max_non_residuals, max_non_residuals);
   ros::param::param("~feature_error_threshold", feature_error_threshold, feature_error_threshold);
   ros::param::param("~log_feature_counts", log_feature_counts, log_feature_counts);
+  ros::param::param("~log_module_timing", log_module_timing, log_module_timing);
   ros::param::param("~corner_adaptive_enable", corner_adaptive_enable, corner_adaptive_enable);
   ros::param::param("~corner_adaptive_default_eigen_ratio", corner_adaptive_default_eigen_ratio, corner_adaptive_default_eigen_ratio);
   ros::param::param("~corner_adaptive_low_feature_eigen_ratio", corner_adaptive_low_feature_eigen_ratio, corner_adaptive_low_feature_eigen_ratio);
@@ -659,7 +679,7 @@ int main(int argc, char** argv)
   residual_config.adaptive_corner.high_feature_max_keep = corner_adaptive_high_feature_max_keep;
 
   laserCloudFullRes.reset(new pcl::PointCloud<PointType>);
-  estimator = new Estimator(filter_parameter_corner, filter_parameter_surf, map_config, residual_config);
+  estimator = new Estimator(filter_parameter_corner, filter_parameter_surf, map_config, residual_config, log_module_timing);
 	lidarFrameList.reset(new std::list<Estimator::LidarFrame>);
 
   std::thread thread_process{process};

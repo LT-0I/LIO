@@ -8,6 +8,7 @@ max_surf_residuals: 750
 max_non_residuals: 350
 feature_error_threshold: 0
 log_feature_counts: false
+log_module_timing: true
 corner_adaptive_enable: true
 corner_adaptive_default_eigen_ratio: 3.0
 corner_adaptive_low_feature_eigen_ratio: 2.5

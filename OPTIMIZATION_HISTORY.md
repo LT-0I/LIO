@@ -85,11 +85,12 @@
   - **旧版误差排序的风险**：“开头飞、跑一会儿才稳” 的现象只在误差排序方案中出现（隧道角点误差太小被全部剔除）；回退均匀抽样后，这种隐患消失。
 - **作用**：恢复隧道场景的稳定性，同时通过日志量化角点来源与 KD-tree 判定情况，为后续制定“自适应角点保底/阈值放宽”等策略提供依据；也确保其他场景在不调参的情况下继续稳定运行。
 
-## 14. `current` “角点/残差统计输出可开关”
+## 14. `a791508`统计输出可开关”
 - **改动内容**：
   - 在 `EstimatorResidualConfig` 与 `PoseEstimation` 中新增 `log_feature_counts` 参数，可通过 YAML/rosparam 控制是否构建角点/残差统计并在终端输出。
   - 当开关关闭时跳过 `FeatureBuildStats` 的分配与汇总，仅保留 Frame 计数；打开时会恢复 `Estimator corner adaptive`、`build stats` 与残差候选/保留数量的日志。
-  - `horizon_params.yaml` 补充该配置，默认 `false` 以保持安静输出，需要调试角点来源时再启用。
+  - 新增 `log_module_timing` 参数，控制是否输出 RemoveDistortion、IMU 预积分、MapManager 快照/更新、残差构建、Ceres 求解、边缘化等关键阶段的起止时间，方便定位耗时。
+  - `horizon_params.yaml` 补充上述两个配置，默认 `false` 以保持安静输出，需要调试时再启用。
 - **作用**：让现场运行保持最小日志与计算开销，同时在需要排查角点不足、KD-tree 命中率等问题时可以“即开即用”，避免每次都改代码重新编译。
 
 ---

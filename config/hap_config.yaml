@@ -28,3 +28,10 @@ max_surf_residuals: 750
 max_non_residuals: 350
 feature_error_threshold: 1.0e-5
 log_feature_counts: true
+corner_adaptive_enable: true
+corner_adaptive_default_eigen_ratio: 3.0
+corner_adaptive_low_feature_eigen_ratio: 2.5
+corner_adaptive_low_feature_global_kd: 80
+corner_adaptive_low_feature_min_keep: 200
+corner_adaptive_high_feature_global_kd: 800
+corner_adaptive_high_feature_max_keep: 400

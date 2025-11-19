@@ -8,6 +8,7 @@ Estimator::Estimator(const float& filter_corner,
                      const MapManagerConfig& map_config,
                      const EstimatorResidualConfig& residual_config)
 : residual_config_(residual_config){
+  corner_eigen_ratio_ = residual_config_.adaptive_corner.default_eigen_ratio;
   laserCloudCornerFromLocal.reset(new pcl::PointCloud<PointType>);
   laserCloudSurfFromLocal.reset(new pcl::PointCloud<PointType>);
   laserCloudNonFeatureFromLocal.reset(new pcl::PointCloud<PointType>);
@@ -227,7 +228,7 @@ void Estimator::processPointToLine(std::vector<std::unique_ptr<ceres::CostFuncti
       Eigen::SelfAdjointEigenSolver<Eigen::Matrix3d> saes(_matA1);
       Eigen::Vector3d unit_direction = saes.eigenvectors().col(2);
 
-      if (saes.eigenvalues()[2] > 3 * saes.eigenvalues()[1]) {
+      if (saes.eigenvalues()[2] > corner_eigen_ratio_ * saes.eigenvalues()[1]) {
         if(stats) stats->global_eigen_pass++;
         debug_num12 ++;
         float x1 = cx + 0.1 * unit_direction[0];
@@ -316,7 +317,7 @@ void Estimator::processPointToLine(std::vector<std::unique_ptr<ceres::CostFuncti
       Eigen::SelfAdjointEigenSolver<Eigen::Matrix3d> saes(_matA1);
       Eigen::Vector3d unit_direction = saes.eigenvectors().col(2);
 
-        if (saes.eigenvalues()[2] > 3 * saes.eigenvalues()[1]) {
+        if (saes.eigenvalues()[2] > corner_eigen_ratio_ * saes.eigenvalues()[1]) {
           if(stats) stats->local_eigen_pass++;
           debug_num22++;
           float x1 = cx + 0.1 * unit_direction[0];
@@ -1078,6 +1079,15 @@ void Estimator::Estimate(std::list<LidarFrame>& lidarFrameList,
       worker.join();
     }
 
+    double avg_global_kd = 0.0;
+    if(!line_feature_stats.empty()){
+      long total_global_kd = 0;
+      for(const auto& stats : line_feature_stats){
+        total_global_kd += stats.global_kd_success;
+      }
+      avg_global_kd = static_cast<double>(total_global_kd) / static_cast<double>(line_feature_stats.size());
+    }
+
     ceres::LossFunction* loss_function = nullptr;
     if(windowSize != SLIDEWINDOWSIZE){
       loss_function = new ceres::HuberLoss(0.1 / IMUIntegrator::lidar_m);
@@ -1131,7 +1141,24 @@ void Estimator::Estimate(std::list<LidarFrame>& lidarFrameList,
     int candidateCornerLocal = 0;
     int keptCornerGlobal = 0;
     int keptCornerLocal = 0;
-    const int maxCornerResidualsPerFrame = residual_config_.max_corner_residuals;
+    bool low_feature_mode = false;
+    bool high_feature_mode = false;
+    const auto& adaptive_corner = residual_config_.adaptive_corner;
+    int adaptiveCornerLimit = residual_config_.max_corner_residuals;
+    double eigen_ratio_target = adaptive_corner.default_eigen_ratio;
+    if(adaptive_corner.enable){
+      if(avg_global_kd < adaptive_corner.low_feature_global_kd){
+        low_feature_mode = true;
+        adaptiveCornerLimit = std::max(adaptiveCornerLimit, adaptive_corner.low_feature_min_keep);
+        eigen_ratio_target = adaptive_corner.low_feature_eigen_ratio;
+      }else if(avg_global_kd > adaptive_corner.high_feature_global_kd){
+        high_feature_mode = true;
+        adaptiveCornerLimit = std::min(adaptiveCornerLimit, adaptive_corner.high_feature_max_keep);
+      }
+    }
+    adaptiveCornerLimit = std::max(1, adaptiveCornerLimit);
+    corner_eigen_ratio_ = eigen_ratio_target;
+    const int maxCornerResidualsPerFrame = adaptiveCornerLimit;
     const int maxSurfResidualsPerFrame = residual_config_.max_surf_residuals;
     const int maxNonResidualsPerFrame = residual_config_.max_non_residuals;
     const double featureErrorThreshold = residual_config_.feature_error_threshold;
@@ -1334,6 +1361,15 @@ void Estimator::Estimate(std::list<LidarFrame>& lidarFrameList,
           }
       }
     if(residual_config_.log_feature_counts){
+      const char* mode_str = "balanced";
+      if(low_feature_mode) mode_str = "low_feature";
+      else if(high_feature_mode) mode_str = "high_feature";
+      ROS_INFO("Estimator corner adaptive iter %d: mode=%s avg_global_kd=%.1f limit=%d eigen_ratio=%.2f",
+               iterOpt,
+               mode_str,
+               avg_global_kd,
+               maxCornerResidualsPerFrame,
+               corner_eigen_ratio_);
       FeatureBuildStats total_stats;
       for(const auto& s : line_feature_stats){
         total_stats.points_total += s.points_total;
@@ -1357,11 +1393,11 @@ void Estimator::Estimate(std::list<LidarFrame>& lidarFrameList,
                  total_stats.local_eigen_pass,
                  total_stats.local_eigen_fail);
       }
+      ROS_INFO("Estimator residual candidates iter %d: corner=%d (global=%d local=%d) surf=%d non=%d",
+               iterOpt, candidateCorner, candidateCornerGlobal, candidateCornerLocal, candidateSurf, candidateNon);
+      ROS_INFO("Estimator residual kept iter %d: corner=%d (global=%d local=%d) surf=%d non=%d",
+               iterOpt, cntCorner, keptCornerGlobal, keptCornerLocal, cntSurf, cntNon);
     }
-    ROS_INFO("Estimator residual candidates iter %d: corner=%d (global=%d local=%d) surf=%d non=%d",
-             iterOpt, candidateCorner, candidateCornerGlobal, candidateCornerLocal, candidateSurf, candidateNon);
-    ROS_INFO("Estimator residual kept iter %d: corner=%d (global=%d local=%d) surf=%d non=%d",
-             iterOpt, cntCorner, keptCornerGlobal, keptCornerLocal, cntSurf, cntNon);
 
       ceres::Solver::Options options;
       options.linear_solver_type = ceres::DENSE_SCHUR;

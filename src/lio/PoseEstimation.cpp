@@ -614,6 +614,13 @@ int main(int argc, char** argv)
   int max_non_residuals = 350;
   double feature_error_threshold = 1e-5;
   bool log_feature_counts = true;
+  bool corner_adaptive_enable = true;
+  double corner_adaptive_default_eigen_ratio = 3.0;
+  double corner_adaptive_low_feature_eigen_ratio = 2.5;
+  int corner_adaptive_low_feature_global_kd = 80;
+  int corner_adaptive_low_feature_min_keep = 200;
+  int corner_adaptive_high_feature_global_kd = 800;
+  int corner_adaptive_high_feature_max_keep = 400;
   ros::param::param("~map_width", map_width, map_width);
   ros::param::param("~map_height", map_height, map_height);
   ros::param::param("~map_depth", map_depth, map_depth);
@@ -623,6 +630,13 @@ int main(int argc, char** argv)
   ros::param::param("~max_non_residuals", max_non_residuals, max_non_residuals);
   ros::param::param("~feature_error_threshold", feature_error_threshold, feature_error_threshold);
   ros::param::param("~log_feature_counts", log_feature_counts, log_feature_counts);
+  ros::param::param("~corner_adaptive_enable", corner_adaptive_enable, corner_adaptive_enable);
+  ros::param::param("~corner_adaptive_default_eigen_ratio", corner_adaptive_default_eigen_ratio, corner_adaptive_default_eigen_ratio);
+  ros::param::param("~corner_adaptive_low_feature_eigen_ratio", corner_adaptive_low_feature_eigen_ratio, corner_adaptive_low_feature_eigen_ratio);
+  ros::param::param("~corner_adaptive_low_feature_global_kd", corner_adaptive_low_feature_global_kd, corner_adaptive_low_feature_global_kd);
+  ros::param::param("~corner_adaptive_low_feature_min_keep", corner_adaptive_low_feature_min_keep, corner_adaptive_low_feature_min_keep);
+  ros::param::param("~corner_adaptive_high_feature_global_kd", corner_adaptive_high_feature_global_kd, corner_adaptive_high_feature_global_kd);
+  ros::param::param("~corner_adaptive_high_feature_max_keep", corner_adaptive_high_feature_max_keep, corner_adaptive_high_feature_max_keep);
 
   MapManagerConfig map_config;
   map_config.width = map_width;
@@ -636,6 +650,13 @@ int main(int argc, char** argv)
   residual_config.max_non_residuals = max_non_residuals;
   residual_config.feature_error_threshold = feature_error_threshold;
   residual_config.log_feature_counts = log_feature_counts;
+  residual_config.adaptive_corner.enable = corner_adaptive_enable;
+  residual_config.adaptive_corner.default_eigen_ratio = corner_adaptive_default_eigen_ratio;
+  residual_config.adaptive_corner.low_feature_eigen_ratio = corner_adaptive_low_feature_eigen_ratio;
+  residual_config.adaptive_corner.low_feature_global_kd = corner_adaptive_low_feature_global_kd;
+  residual_config.adaptive_corner.low_feature_min_keep = corner_adaptive_low_feature_min_keep;
+  residual_config.adaptive_corner.high_feature_global_kd = corner_adaptive_high_feature_global_kd;
+  residual_config.adaptive_corner.high_feature_max_keep = corner_adaptive_high_feature_max_keep;
 
   laserCloudFullRes.reset(new pcl::PointCloud<PointType>);
   estimator = new Estimator(filter_parameter_corner, filter_parameter_surf, map_config, residual_config);

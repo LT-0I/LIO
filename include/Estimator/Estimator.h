@@ -22,12 +22,23 @@
 #include "IMUIntegrator/IMUIntegrator.h"
 #include <chrono>
 
+struct CornerAdaptiveConfig{
+	bool enable = true;
+	double default_eigen_ratio = 3.0;
+	double low_feature_eigen_ratio = 2.5;
+	int low_feature_global_kd = 80;
+	int low_feature_min_keep = 200;
+	int high_feature_global_kd = 800;
+	int high_feature_max_keep = 400;
+};
+
 struct EstimatorResidualConfig{
 	int max_corner_residuals = 500;
 	int max_surf_residuals = 750;
 	int max_non_residuals = 350;
 	double feature_error_threshold = 1e-5;
 	bool log_feature_counts = true;
+	CornerAdaptiveConfig adaptive_corner;
 };
 
 class Estimator{
@@ -317,6 +328,7 @@ private:
 	int map_skip_frame = 2; //every map_skip_frame frame update map
 	double plan_weight_tan = 0.0;
 	double thres_dist = 1.0;
+	double corner_eigen_ratio_ = 3.0;
 };
 
 #endif //LIO_LIVOX_ESTIMATOR_H

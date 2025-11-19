@@ -27,3 +27,4 @@ max_corner_residuals: 500
 max_surf_residuals: 750
 max_non_residuals: 350
 feature_error_threshold: 1.0e-5
+log_feature_counts: true

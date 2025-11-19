@@ -27,6 +27,7 @@ struct EstimatorResidualConfig{
 	int max_surf_residuals = 750;
 	int max_non_residuals = 350;
 	double feature_error_threshold = 1e-5;
+	bool log_feature_counts = true;
 };
 
 class Estimator{
@@ -62,10 +63,12 @@ public:
 		Eigen::Vector3d lineP2;
 		double error;
 		bool valid;
+		bool from_global;
 		FeatureLine(Eigen::Vector3d  po, Eigen::Vector3d  p1, Eigen::Vector3d  p2)
 						:pointOri(std::move(po)), lineP1(std::move(p1)), lineP2(std::move(p2)){
 			valid = false;
 			error = 0;
+			from_global = false;
 		}
 		double ComputeError(const Eigen::Matrix4d& pose){
 			Eigen::Vector3d P_to_Map = pose.topLeftCorner(3,3) * pointOri + pose.topRightCorner(3,1);
@@ -148,6 +151,17 @@ public:
 		}
 	};
 
+	struct FeatureBuildStats{
+		int points_total = 0;
+		int global_region_skipped = 0;
+		int global_kd_success = 0;
+		int global_eigen_pass = 0;
+		int global_eigen_fail = 0;
+		int local_kd_success = 0;
+		int local_eigen_pass = 0;
+		int local_eigen_fail = 0;
+	};
+
 public:
 	/** \brief constructor of Estimator
 	*/
@@ -172,7 +186,8 @@ public:
 							const pcl::PointCloud<PointType>::Ptr& laserCloudCornerMap,
 							const pcl::KdTreeFLANN<PointType>::Ptr& kdtree,
 							const Eigen::Matrix4d& exTlb,
-							const Eigen::Matrix4d& m4d);
+							const Eigen::Matrix4d& m4d,
+							struct FeatureBuildStats* stats = nullptr);
 
 	/** \brief construct Plan feature Ceres Costfunctions
 	* \param[in] edges: store costfunctions

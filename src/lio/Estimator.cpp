@@ -122,7 +122,8 @@ void Estimator::processPointToLine(std::vector<std::unique_ptr<ceres::CostFuncti
                                    const pcl::PointCloud<PointType>::Ptr& laserCloudCornerLocal,
                                    const pcl::KdTreeFLANN<PointType>::Ptr& kdtreeLocal,
                                    const Eigen::Matrix4d& exTlb,
-                                   const Eigen::Matrix4d& m4d){
+                                   const Eigen::Matrix4d& m4d,
+                                   FeatureBuildStats* stats){
 
   Eigen::Matrix4d Tbl = Eigen::Matrix4d::Identity();
   Tbl.topLeftCorner(3,3) = exTlb.topLeftCorner(3,3).transpose();
@@ -136,6 +137,9 @@ void Estimator::processPointToLine(std::vector<std::unique_ptr<ceres::CostFuncti
                                                         Eigen::Matrix<double, 1, 1>(1/IMUIntegrator::lidar_m)));
     }
     return;
+  }
+  if(stats){
+    stats->points_total = laserCloudCorner->points.size();
   }
   PointType _pointOri, _pointSel, _coeff;
   std::vector<int> _pointSearchInd;
@@ -157,7 +161,10 @@ void Estimator::processPointToLine(std::vector<std::unique_ptr<ceres::CostFuncti
     MAP_MANAGER::pointAssociateToMap(&_pointOri, &_pointSel, m4d);
     int id = map_manager->FindUsedCornerMap(&_pointSel,laserCenWidth_last,laserCenHeight_last,laserCenDepth_last);
 
-    if(id == 5000) continue;
+    if(id == 5000){
+      if(stats) stats->global_region_skipped++;
+      continue;
+    }
 
     if(std::isnan(_pointSel.x) || std::isnan(_pointSel.y) ||std::isnan(_pointSel.z)) continue;
 
@@ -167,6 +174,7 @@ void Estimator::processPointToLine(std::vector<std::unique_ptr<ceres::CostFuncti
       globalCornerKd->nearestKSearch(_pointSel, 5, _pointSearchInd, _pointSearchSqDis);
       
       if (_pointSearchSqDis[4] < thres_dist) {
+        if(stats) stats->global_kd_success++;
 
         debug_num1 ++;
       float cx = 0;
@@ -220,6 +228,7 @@ void Estimator::processPointToLine(std::vector<std::unique_ptr<ceres::CostFuncti
       Eigen::Vector3d unit_direction = saes.eigenvectors().col(2);
 
       if (saes.eigenvalues()[2] > 3 * saes.eigenvalues()[1]) {
+        if(stats) stats->global_eigen_pass++;
         debug_num12 ++;
         float x1 = cx + 0.1 * unit_direction[0];
         float y1 = cy + 0.1 * unit_direction[1];
@@ -238,11 +247,15 @@ void Estimator::processPointToLine(std::vector<std::unique_ptr<ceres::CostFuncti
         vLineFeatures.emplace_back(Eigen::Vector3d(_pointOri.x,_pointOri.y,_pointOri.z),
                                    tripod1,
                                    tripod2);
+        vLineFeatures.back().from_global = true;
         vLineFeatures.back().ComputeError(m4d);
 
         continue;
       }
-      
+      else if(stats){
+        stats->global_eigen_fail++;
+      }
+
     }
     
     }
@@ -250,6 +263,7 @@ void Estimator::processPointToLine(std::vector<std::unique_ptr<ceres::CostFuncti
     if(laserCloudCornerLocal->points.size() > 20 ){
       kdtreeLocal->nearestKSearch(_pointSel, 5, _pointSearchInd2, _pointSearchSqDis2);
       if (_pointSearchSqDis2[4] < thres_dist) {
+        if(stats) stats->local_kd_success++;
 
         debug_num2 ++;
         float cx = 0;
@@ -303,6 +317,7 @@ void Estimator::processPointToLine(std::vector<std::unique_ptr<ceres::CostFuncti
       Eigen::Vector3d unit_direction = saes.eigenvectors().col(2);
 
         if (saes.eigenvalues()[2] > 3 * saes.eigenvalues()[1]) {
+          if(stats) stats->local_eigen_pass++;
           debug_num22++;
           float x1 = cx + 0.1 * unit_direction[0];
           float y1 = cy + 0.1 * unit_direction[1];
@@ -321,7 +336,11 @@ void Estimator::processPointToLine(std::vector<std::unique_ptr<ceres::CostFuncti
           vLineFeatures.emplace_back(Eigen::Vector3d(_pointOri.x,_pointOri.y,_pointOri.z),
                                     tripod1,
                                     tripod2);
+          vLineFeatures.back().from_global = false;
           vLineFeatures.back().ComputeError(m4d);
+        }
+        else if(stats){
+          stats->local_eigen_fail++;
         }
       }
     }
@@ -1001,6 +1020,7 @@ void Estimator::Estimate(std::list<LidarFrame>& lidarFrameList,
     std::vector<std::vector<std::unique_ptr<ceres::CostFunction>>> edgesLine(windowSize);
     std::vector<std::vector<std::unique_ptr<ceres::CostFunction>>> edgesPlan(windowSize);
     std::vector<std::vector<std::unique_ptr<ceres::CostFunction>>> edgesNon(windowSize);
+    std::vector<FeatureBuildStats> line_feature_stats(windowSize);
 
     const unsigned int hw_threads = std::max(1u, std::thread::hardware_concurrency());
     const int worker_count = std::min<int>(windowSize, std::max(1u, hw_threads));
@@ -1016,13 +1036,17 @@ void Estimator::Estimate(std::list<LidarFrame>& lidarFrameList,
         localTransform.topLeftCorner(3,3) = frame_curr->Q * exRbl;
         localTransform.topRightCorner(3,1) = frame_curr->Q * exPbl + frame_curr->P;
 
+        FeatureBuildStats* stats_ptr = (residual_config_.log_feature_counts && iterOpt == 0)
+                                         ? &line_feature_stats[f]
+                                         : nullptr;
         processPointToLine(edgesLine[f],
                            vLineFeatures[f],
                            laserCloudCornerStack[f],
                            laserCloudCornerFromLocal,
                            kdtreeCornerFromLocal,
                            exTlb,
-                           localTransform);
+                           localTransform,
+                           stats_ptr);
 
         processPointToPlanVec(edgesPlan[f],
                               vPlanFeatures[f],
@@ -1100,65 +1124,112 @@ void Estimator::Estimate(std::list<LidarFrame>& lidarFrameList,
     int cntSurf = 0;
     int cntCorner = 0;
     int cntNon = 0;
-    const int maxCornerResidualsPerFrame = 500;
-    const int maxSurfResidualsPerFrame = 750;
-    const int maxNonResidualsPerFrame = 350;
+    int candidateCorner = 0;
+    int candidateSurf = 0;
+    int candidateNon = 0;
+    int candidateCornerGlobal = 0;
+    int candidateCornerLocal = 0;
+    int keptCornerGlobal = 0;
+    int keptCornerLocal = 0;
+    const int maxCornerResidualsPerFrame = residual_config_.max_corner_residuals;
+    const int maxSurfResidualsPerFrame = residual_config_.max_surf_residuals;
+    const int maxNonResidualsPerFrame = residual_config_.max_non_residuals;
     const double featureErrorThreshold = residual_config_.feature_error_threshold;
-    auto selectAndAddResiduals =
-        [&](std::vector<std::unique_ptr<ceres::CostFunction>>& edges,
-            auto& features,
-            int limit,
-            int f,
-            int& globalCount){
-          if(edges.empty()) return;
-          std::vector<int> candidates;
-          candidates.reserve(edges.size());
-          for(size_t idx=0; idx<edges.size(); ++idx){
-            if(edges[idx] && std::fabs(features[idx].error) > featureErrorThreshold){
-              candidates.emplace_back(static_cast<int>(idx));
-            }else{
-              features[idx].valid = false;
-              edges[idx].reset();
-            }
-          }
-          if(candidates.empty()) return;
-          std::sort(candidates.begin(), candidates.end(), [&](int a, int b){
-            return std::fabs(features[a].error) > std::fabs(features[b].error);
-          });
-          if(limit > 0 && static_cast<int>(candidates.size()) > limit){
-            candidates.resize(limit);
-          }
-          std::vector<char> selected(edges.size(), 0);
-          for(int idx : candidates){
-            selected[idx] = 1;
-          }
-          for(size_t idx=0; idx<edges.size(); ++idx){
-            if(selected[idx] && edges[idx]){
-              problem.AddResidualBlock(edges[idx].get(), loss_function, para_PR[f]);
-              edges[idx].release();
-              features[idx].valid = true;
-            }else{
-              features[idx].valid = false;
-              edges[idx].reset();
-            }
-          }
-          globalCount += static_cast<int>(candidates.size());
-        };
+    auto shouldKeepFeature = [](int idx, int total, int kept, int limit) -> bool {
+      if(limit <= 0 || total <= limit) return true;
+      if(kept >= limit) return false;
+      const int stride = (total + limit - 1) / limit;
+      return (idx % stride) == 0;
+    };
       if(windowSize == SLIDEWINDOWSIZE) {
         thres_dist = 1.0;
         if(iterOpt == 0){
           for(int f=0; f<windowSize; ++f){
-          selectAndAddResiduals(edgesLine[f], vLineFeatures[f], maxCornerResidualsPerFrame, f, cntCorner);
-          selectAndAddResiduals(edgesPlan[f], vPlanFeatures[f], maxSurfResidualsPerFrame, f, cntSurf);
-          selectAndAddResiduals(edgesNon[f], vNonFeatures[f], maxNonResidualsPerFrame, f, cntNon);
+          candidateCorner += static_cast<int>(edgesLine[f].size());
+          candidateSurf += static_cast<int>(edgesPlan[f].size());
+          candidateNon += static_cast<int>(edgesNon[f].size());
+          const int totalCorner = edgesLine[f].size();
+          int keptCornerLocalFrame = 0;
+          for(size_t idx=0; idx<edgesLine[f].size(); ++idx){
+            if(edgesLine[f][idx]){
+              if(vLineFeatures[f][idx].from_global){
+                candidateCornerGlobal++;
+              }else{
+                candidateCornerLocal++;
+              }
+            }
+            if(edgesLine[f][idx] && std::fabs(vLineFeatures[f][idx].error) > featureErrorThreshold &&
+               shouldKeepFeature(static_cast<int>(idx), totalCorner, keptCornerLocalFrame, maxCornerResidualsPerFrame)){
+              problem.AddResidualBlock(edgesLine[f][idx].get(), loss_function, para_PR[f]);
+              edgesLine[f][idx].release();
+              vLineFeatures[f][idx].valid = true;
+              ++keptCornerLocalFrame;
+              ++cntCorner;
+              if(vLineFeatures[f][idx].from_global){
+                ++keptCornerGlobal;
+              }else{
+                ++keptCornerLocal;
+              }
+            }else{
+              vLineFeatures[f][idx].valid = false;
+              edgesLine[f][idx].reset();
+            }
+          }
+
+          const int totalSurf = edgesPlan[f].size();
+          int keptSurfLocal = 0;
+          for(size_t idx=0; idx<edgesPlan[f].size(); ++idx){
+            if(edgesPlan[f][idx] && std::fabs(vPlanFeatures[f][idx].error) > featureErrorThreshold &&
+               shouldKeepFeature(static_cast<int>(idx), totalSurf, keptSurfLocal, maxSurfResidualsPerFrame)){
+              problem.AddResidualBlock(edgesPlan[f][idx].get(), loss_function, para_PR[f]);
+              edgesPlan[f][idx].release();
+              vPlanFeatures[f][idx].valid = true;
+              ++keptSurfLocal;
+              ++cntSurf;
+            }else{
+              vPlanFeatures[f][idx].valid = false;
+              edgesPlan[f][idx].reset();
+            }
+          }
+
+          const int totalNon = edgesNon[f].size();
+          int keptNonLocal = 0;
+          for(size_t idx=0; idx<edgesNon[f].size(); ++idx){
+            if(edgesNon[f][idx] && std::fabs(vNonFeatures[f][idx].error) > featureErrorThreshold &&
+               shouldKeepFeature(static_cast<int>(idx), totalNon, keptNonLocal, maxNonResidualsPerFrame)){
+              problem.AddResidualBlock(edgesNon[f][idx].get(), loss_function, para_PR[f]);
+              edgesNon[f][idx].release();
+              vNonFeatures[f][idx].valid = true;
+              ++keptNonLocal;
+              ++cntNon;
+            }else{
+              vNonFeatures[f][idx].valid = false;
+              edgesNon[f][idx].reset();
+            }
+          }
           }
         }else{
           for(int f=0; f<windowSize; ++f){
+            candidateCorner += static_cast<int>(edgesLine[f].size());
+            candidateSurf += static_cast<int>(edgesPlan[f].size());
+            candidateNon += static_cast<int>(edgesNon[f].size());
             int cntFtu = 0;
             for (auto &edge_ptr : edgesLine[f]) {
+              if(edge_ptr){
+                if(vLineFeatures[f][cntFtu].from_global){
+                  candidateCornerGlobal++;
+                }else{
+                  candidateCornerLocal++;
+                }
+              }
               if(vLineFeatures[f][cntFtu].valid && edge_ptr) {
                 problem.AddResidualBlock(edge_ptr.get(), loss_function, para_PR[f]);
                 edge_ptr.release();
+                if(vLineFeatures[f][cntFtu].from_global){
+                  ++keptCornerGlobal;
+                }else{
+                  ++keptCornerLocal;
+                }
               } else{
                 edge_ptr.reset();
               }
@@ -1197,14 +1268,100 @@ void Estimator::Estimate(std::list<LidarFrame>& lidarFrameList,
             thres_dist = 1.0;
           }
           for(int f=0; f<windowSize; ++f){
-          selectAndAddResiduals(edgesLine[f], vLineFeatures[f], maxCornerResidualsPerFrame, f, cntCorner);
-          selectAndAddResiduals(edgesPlan[f], vPlanFeatures[f], maxSurfResidualsPerFrame, f, cntSurf);
-          selectAndAddResiduals(edgesNon[f], vNonFeatures[f], maxNonResidualsPerFrame, f, cntNon);
+          candidateCorner += static_cast<int>(edgesLine[f].size());
+          candidateSurf += static_cast<int>(edgesPlan[f].size());
+          candidateNon += static_cast<int>(edgesNon[f].size());
+
+          const int totalCorner = edgesLine[f].size();
+          int keptCornerLocalFrame = 0;
+          for(size_t idx=0; idx<edgesLine[f].size(); ++idx){
+            if(edgesLine[f][idx]){
+              if(vLineFeatures[f][idx].from_global){
+                candidateCornerGlobal++;
+              }else{
+                candidateCornerLocal++;
+              }
+            }
+            if(edgesLine[f][idx] && std::fabs(vLineFeatures[f][idx].error) > featureErrorThreshold &&
+               shouldKeepFeature(static_cast<int>(idx), totalCorner, keptCornerLocalFrame, maxCornerResidualsPerFrame)){
+              problem.AddResidualBlock(edgesLine[f][idx].get(), loss_function, para_PR[f]);
+              edgesLine[f][idx].release();
+              vLineFeatures[f][idx].valid = true;
+              ++keptCornerLocalFrame;
+              ++cntCorner;
+              if(vLineFeatures[f][idx].from_global){
+                ++keptCornerGlobal;
+              }else{
+                ++keptCornerLocal;
+              }
+            }else{
+              vLineFeatures[f][idx].valid = false;
+              edgesLine[f][idx].reset();
+            }
+          }
+
+          const int totalSurf = edgesPlan[f].size();
+          int keptSurfLocalFrame = 0;
+          for(size_t idx=0; idx<edgesPlan[f].size(); ++idx){
+            if(edgesPlan[f][idx] && std::fabs(vPlanFeatures[f][idx].error) > featureErrorThreshold &&
+               shouldKeepFeature(static_cast<int>(idx), totalSurf, keptSurfLocalFrame, maxSurfResidualsPerFrame)){
+              problem.AddResidualBlock(edgesPlan[f][idx].get(), loss_function, para_PR[f]);
+              edgesPlan[f][idx].release();
+              vPlanFeatures[f][idx].valid = true;
+              ++keptSurfLocalFrame;
+              ++cntSurf;
+            }else{
+              vPlanFeatures[f][idx].valid = false;
+              edgesPlan[f][idx].reset();
+            }
+          }
+
+          const int totalNon = edgesNon[f].size();
+          int keptNonLocalFrame = 0;
+          for(size_t idx=0; idx<edgesNon[f].size(); ++idx){
+            if(edgesNon[f][idx] && std::fabs(vNonFeatures[f][idx].error) > featureErrorThreshold &&
+               shouldKeepFeature(static_cast<int>(idx), totalNon, keptNonLocalFrame, maxNonResidualsPerFrame)){
+              problem.AddResidualBlock(edgesNon[f][idx].get(), loss_function, para_PR[f]);
+              edgesNon[f][idx].release();
+              vNonFeatures[f][idx].valid = true;
+              ++keptNonLocalFrame;
+              ++cntNon;
+            }else{
+              vNonFeatures[f][idx].valid = false;
+              edgesNon[f][idx].reset();
+            }
+          }
           }
       }
-
-    ROS_INFO("Estimator residual kept iter %d: corner=%d surf=%d non=%d",
-             iterOpt, cntCorner, cntSurf, cntNon);
+    if(residual_config_.log_feature_counts){
+      FeatureBuildStats total_stats;
+      for(const auto& s : line_feature_stats){
+        total_stats.points_total += s.points_total;
+        total_stats.global_region_skipped += s.global_region_skipped;
+        total_stats.global_kd_success += s.global_kd_success;
+        total_stats.global_eigen_pass += s.global_eigen_pass;
+        total_stats.global_eigen_fail += s.global_eigen_fail;
+        total_stats.local_kd_success += s.local_kd_success;
+        total_stats.local_eigen_pass += s.local_eigen_pass;
+        total_stats.local_eigen_fail += s.local_eigen_fail;
+      }
+      if(total_stats.points_total > 0){
+        ROS_INFO("Estimator corner build stats iter %d: points=%d region_skip=%d global_kd=%d global_pass=%d global_fail=%d local_kd=%d local_pass=%d local_fail=%d",
+                 iterOpt,
+                 total_stats.points_total,
+                 total_stats.global_region_skipped,
+                 total_stats.global_kd_success,
+                 total_stats.global_eigen_pass,
+                 total_stats.global_eigen_fail,
+                 total_stats.local_kd_success,
+                 total_stats.local_eigen_pass,
+                 total_stats.local_eigen_fail);
+      }
+    }
+    ROS_INFO("Estimator residual candidates iter %d: corner=%d (global=%d local=%d) surf=%d non=%d",
+             iterOpt, candidateCorner, candidateCornerGlobal, candidateCornerLocal, candidateSurf, candidateNon);
+    ROS_INFO("Estimator residual kept iter %d: corner=%d (global=%d local=%d) surf=%d non=%d",
+             iterOpt, cntCorner, keptCornerGlobal, keptCornerLocal, cntSurf, cntNon);
 
       ceres::Solver::Options options;
       options.linear_solver_type = ceres::DENSE_SCHUR;
@@ -1285,7 +1442,8 @@ void Estimator::Estimate(std::list<LidarFrame>& lidarFrameList,
                                         std::ref(laserCloudCornerFromLocal),
                                         std::ref(kdtreeCornerFromLocal),
                                         std::ref(exTlb),
-                                        std::ref(transformTobeMapped));
+                                        std::ref(transformTobeMapped),
+                                        nullptr);
 
       marginal_threads[1] = std::thread(&Estimator::processPointToPlanVec, this,
                                         std::ref(edgesPlan[f]),

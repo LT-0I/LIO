@@ -613,6 +613,7 @@ int main(int argc, char** argv)
   int max_surf_residuals = 750;
   int max_non_residuals = 350;
   double feature_error_threshold = 1e-5;
+  bool log_feature_counts = true;
   ros::param::param("~map_width", map_width, map_width);
   ros::param::param("~map_height", map_height, map_height);
   ros::param::param("~map_depth", map_depth, map_depth);
@@ -621,6 +622,7 @@ int main(int argc, char** argv)
   ros::param::param("~max_surf_residuals", max_surf_residuals, max_surf_residuals);
   ros::param::param("~max_non_residuals", max_non_residuals, max_non_residuals);
   ros::param::param("~feature_error_threshold", feature_error_threshold, feature_error_threshold);
+  ros::param::param("~log_feature_counts", log_feature_counts, log_feature_counts);
 
   MapManagerConfig map_config;
   map_config.width = map_width;
@@ -633,6 +635,7 @@ int main(int argc, char** argv)
   residual_config.max_surf_residuals = max_surf_residuals;
   residual_config.max_non_residuals = max_non_residuals;
   residual_config.feature_error_threshold = feature_error_threshold;
+  residual_config.log_feature_counts = log_feature_counts;
 
   laserCloudFullRes.reset(new pcl::PointCloud<PointType>);
   estimator = new Estimator(filter_parameter_corner, filter_parameter_surf, map_config, residual_config);

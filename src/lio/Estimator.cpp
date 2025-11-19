@@ -1021,7 +1021,10 @@ void Estimator::Estimate(std::list<LidarFrame>& lidarFrameList,
     std::vector<std::vector<std::unique_ptr<ceres::CostFunction>>> edgesLine(windowSize);
     std::vector<std::vector<std::unique_ptr<ceres::CostFunction>>> edgesPlan(windowSize);
     std::vector<std::vector<std::unique_ptr<ceres::CostFunction>>> edgesNon(windowSize);
-    std::vector<FeatureBuildStats> line_feature_stats(windowSize);
+    std::vector<FeatureBuildStats> line_feature_stats;
+    if(residual_config_.log_feature_counts){
+      line_feature_stats.resize(windowSize);
+    }
 
     const unsigned int hw_threads = std::max(1u, std::thread::hardware_concurrency());
     const int worker_count = std::min<int>(windowSize, std::max(1u, hw_threads));
@@ -1037,7 +1040,7 @@ void Estimator::Estimate(std::list<LidarFrame>& lidarFrameList,
         localTransform.topLeftCorner(3,3) = frame_curr->Q * exRbl;
         localTransform.topRightCorner(3,1) = frame_curr->Q * exPbl + frame_curr->P;
 
-        FeatureBuildStats* stats_ptr = (residual_config_.log_feature_counts && iterOpt == 0)
+        FeatureBuildStats* stats_ptr = (residual_config_.log_feature_counts && iterOpt == 0 && !line_feature_stats.empty())
                                          ? &line_feature_stats[f]
                                          : nullptr;
         processPointToLine(edgesLine[f],
@@ -1079,8 +1082,8 @@ void Estimator::Estimate(std::list<LidarFrame>& lidarFrameList,
       worker.join();
     }
 
-    double avg_global_kd = 0.0;
-    if(!line_feature_stats.empty()){
+    double avg_global_kd = residual_config_.adaptive_corner.low_feature_global_kd + 1.0;
+    if(residual_config_.log_feature_counts && !line_feature_stats.empty()){
       long total_global_kd = 0;
       for(const auto& stats : line_feature_stats){
         total_global_kd += stats.global_kd_success;
@@ -1360,44 +1363,47 @@ void Estimator::Estimate(std::list<LidarFrame>& lidarFrameList,
           }
           }
       }
-    if(residual_config_.log_feature_counts){
-      const char* mode_str = "balanced";
-      if(low_feature_mode) mode_str = "low_feature";
-      else if(high_feature_mode) mode_str = "high_feature";
-      ROS_INFO("Estimator corner adaptive iter %d: mode=%s avg_global_kd=%.1f limit=%d eigen_ratio=%.2f",
-               iterOpt,
-               mode_str,
-               avg_global_kd,
-               maxCornerResidualsPerFrame,
-               corner_eigen_ratio_);
-      FeatureBuildStats total_stats;
-      for(const auto& s : line_feature_stats){
-        total_stats.points_total += s.points_total;
-        total_stats.global_region_skipped += s.global_region_skipped;
-        total_stats.global_kd_success += s.global_kd_success;
-        total_stats.global_eigen_pass += s.global_eigen_pass;
-        total_stats.global_eigen_fail += s.global_eigen_fail;
-        total_stats.local_kd_success += s.local_kd_success;
-        total_stats.local_eigen_pass += s.local_eigen_pass;
-        total_stats.local_eigen_fail += s.local_eigen_fail;
-      }
-      if(total_stats.points_total > 0){
-        ROS_INFO("Estimator corner build stats iter %d: points=%d region_skip=%d global_kd=%d global_pass=%d global_fail=%d local_kd=%d local_pass=%d local_fail=%d",
+
+      if(residual_config_.log_feature_counts){
+        const char* mode_str = "balanced";
+        if(low_feature_mode) mode_str = "low_feature";
+        else if(high_feature_mode) mode_str = "high_feature";
+        ROS_INFO("Estimator corner adaptive iter %d: mode=%s avg_global_kd=%.1f limit=%d eigen_ratio=%.2f",
                  iterOpt,
-                 total_stats.points_total,
-                 total_stats.global_region_skipped,
-                 total_stats.global_kd_success,
-                 total_stats.global_eigen_pass,
-                 total_stats.global_eigen_fail,
-                 total_stats.local_kd_success,
-                 total_stats.local_eigen_pass,
-                 total_stats.local_eigen_fail);
+                 mode_str,
+                 avg_global_kd,
+                 maxCornerResidualsPerFrame,
+                 corner_eigen_ratio_);
+        if(!line_feature_stats.empty()){
+          FeatureBuildStats total_stats;
+          for(const auto& s : line_feature_stats){
+            total_stats.points_total += s.points_total;
+            total_stats.global_region_skipped += s.global_region_skipped;
+            total_stats.global_kd_success += s.global_kd_success;
+            total_stats.global_eigen_pass += s.global_eigen_pass;
+            total_stats.global_eigen_fail += s.global_eigen_fail;
+            total_stats.local_kd_success += s.local_kd_success;
+            total_stats.local_eigen_pass += s.local_eigen_pass;
+            total_stats.local_eigen_fail += s.local_eigen_fail;
+          }
+          if(total_stats.points_total > 0){
+            ROS_INFO("Estimator corner build stats iter %d: points=%d region_skip=%d global_kd=%d global_pass=%d global_fail=%d local_kd=%d local_pass=%d local_fail=%d",
+                     iterOpt,
+                     total_stats.points_total,
+                     total_stats.global_region_skipped,
+                     total_stats.global_kd_success,
+                     total_stats.global_eigen_pass,
+                     total_stats.global_eigen_fail,
+                     total_stats.local_kd_success,
+                     total_stats.local_eigen_pass,
+                     total_stats.local_eigen_fail);
+          }
+        }
+        ROS_INFO("Estimator residual candidates iter %d: corner=%d (global=%d local=%d) surf=%d non=%d",
+                 iterOpt, candidateCorner, candidateCornerGlobal, candidateCornerLocal, candidateSurf, candidateNon);
+        ROS_INFO("Estimator residual kept iter %d: corner=%d (global=%d local=%d) surf=%d non=%d",
+                 iterOpt, cntCorner, keptCornerGlobal, keptCornerLocal, cntSurf, cntNon);
       }
-      ROS_INFO("Estimator residual candidates iter %d: corner=%d (global=%d local=%d) surf=%d non=%d",
-               iterOpt, candidateCorner, candidateCornerGlobal, candidateCornerLocal, candidateSurf, candidateNon);
-      ROS_INFO("Estimator residual kept iter %d: corner=%d (global=%d local=%d) surf=%d non=%d",
-               iterOpt, cntCorner, keptCornerGlobal, keptCornerLocal, cntSurf, cntNon);
-    }
 
       ceres::Solver::Options options;
       options.linear_solver_type = ceres::DENSE_SCHUR;
@@ -1411,15 +1417,8 @@ void Estimator::Estimate(std::list<LidarFrame>& lidarFrameList,
       options.minimizer_progress_to_stdout = false;
     const unsigned int ceres_threads = std::max(1u, std::thread::hardware_concurrency());
     options.num_threads = static_cast<int>(ceres_threads);
-    ROS_INFO("Estimator ceres solve start %.6f", ros::Time::now().toSec());
     ceres::Solver::Summary summary;
     ceres::Solve(options, &problem, &summary);
-    ROS_INFO("Estimator ceres summary iter %d: steps=%d initial_cost=%.6f final_cost=%.6f",
-             iterOpt,
-             static_cast<int>(summary.iterations.size()),
-             summary.initial_cost,
-             summary.final_cost);
-    ROS_INFO("Estimator ceres solve end %.6f", ros::Time::now().toSec());
     } // problem scope
 
     double2vector(lidarFrameList);

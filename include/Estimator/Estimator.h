@@ -37,7 +37,7 @@ struct EstimatorResidualConfig{
 	int max_surf_residuals = 750;
 	int max_non_residuals = 350;
 	double feature_error_threshold = 1e-5;
-	bool log_feature_counts = true;
+	bool log_feature_counts = false;
 	CornerAdaptiveConfig adaptive_corner;
 };
 

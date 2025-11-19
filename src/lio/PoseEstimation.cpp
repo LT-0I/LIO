@@ -613,7 +613,7 @@ int main(int argc, char** argv)
   int max_surf_residuals = 750;
   int max_non_residuals = 350;
   double feature_error_threshold = 1e-5;
-  bool log_feature_counts = true;
+  bool log_feature_counts = false;
   bool corner_adaptive_enable = true;
   double corner_adaptive_default_eigen_ratio = 3.0;
   double corner_adaptive_low_feature_eigen_ratio = 2.5;

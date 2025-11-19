@@ -15,35 +15,3 @@ LidarNearestDis: 1.0 # if(depth < LidarNearestDis) do not use this point
 KdTreeCornerOutlierDis: 0.2 # corner filter threshold
 Use_seg: 1 # use segment algorithm
 map_skip_frame: 2
-
-# map grid configuration
-map_width: 21
-map_height: 11
-map_depth: 21
-map_local_window: 60
-
-# 残差选择与自适应配置（corner/surf/non 上限、误差阈值、日志开关及自适应角点策略）
-# corner 残差的最大保留数量上限
-max_corner_residuals: 500
-# surf 残差的最大保留数量上限
-max_surf_residuals: 750
-# non 特征残差的最大保留数量上限
-max_non_residuals: 350
-# 特征误差阈值（<= 此误差的特征会被丢弃；设 0 表示全部保留）
-feature_error_threshold: 0
-# 是否在命令行打印角点/残差信息（含统计、模式切换等所有日志）
-log_feature_counts: true
-# 是否启用角点自适应策略
-corner_adaptive_enable: true
-# 默认情况下的 eigen 判定倍数（=3 表示最大特征值需 >3 倍次大）
-corner_adaptive_default_eigen_ratio: 3.0
-# 低特征场景下放宽的 eigen 判定倍数
-corner_adaptive_low_feature_eigen_ratio: 2.5
-# 低特征模式触发阈值：平均 global_kd 低于该值时启用
-corner_adaptive_low_feature_global_kd: 80
-# 低特征模式下的角点保底数量
-corner_adaptive_low_feature_min_keep: 200
-# 高特征模式触发阈值：平均 global_kd 高于该值时启用
-corner_adaptive_high_feature_global_kd: 800
-# 高特征模式下的角点数量上限（用于抑制时延）
-corner_adaptive_high_feature_max_keep: 400

@@ -93,7 +93,7 @@
   - `horizon_params.yaml` 补充上述两个配置，默认 `false` 以保持安静输出，需要调试时再启用。
 - **作用**：让现场运行保持最小日志与计算开销，同时在需要排查角点不足、KD-tree 命中率等问题时可以“即开即用”，避免每次都改代码重新编译。
 
-## 15. `pending` “Adaptive residual budget + 局部地图限流”
+## 15. `8112114` “Adaptive residual budget + 局部地图限流”
 - **改动内容**：
   - 在 `MapManagerConfig`/`horizon_params.yaml` 中新增 `local_box_*`（前/后/侧/上下包围盒）与 `local_*_max_points`（corner/surf/non 最大点数）参数，`MapIncrementLocal` 依据配置对局部地图做再次抽样，保证 KD-tree 输入点数在受控范围内，防止停车场等高密度场景让内存与建树时间失控。
   - `EstimatorResidualConfig` 引入 `adaptive_budget`，通过 `ros::WallTime` 记录残差构建与 Ceres 求解耗时，若超过 `target_build_ms` / `target_solve_ms` 则按 `adjust_ratio` 自动下调角/面/非特征配额，低于目标则缓慢回升。运行时限额存于 `runtime_*_limit_`，并与已有的角点自适应（low/high feature）组合使用。

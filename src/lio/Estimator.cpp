@@ -1,5 +1,6 @@
 #include "Estimator/Estimator.h"
 #include <algorithm>
+#include <cmath>
 #include <memory>
 #include <thread>
 
@@ -11,6 +12,17 @@ Estimator::Estimator(const float& filter_corner,
 : residual_config_(residual_config),
   log_module_timing_(log_module_timing){
   corner_eigen_ratio_ = residual_config_.adaptive_corner.default_eigen_ratio;
+  localBoxForward = map_config.local_box_forward;
+  localBoxBackward = map_config.local_box_backward;
+  localBoxSide = map_config.local_box_side;
+  localBoxVertical = map_config.local_box_vertical;
+  map_skip_frame = std::max(1, map_config.map_skip_frame);
+  local_corner_max_points_ = std::max(0, map_config.local_corner_max_points);
+  local_surf_max_points_ = std::max(0, map_config.local_surf_max_points);
+  local_non_max_points_ = std::max(0, map_config.local_non_max_points);
+  runtime_corner_limit_ = std::max(1, residual_config_.max_corner_residuals);
+  runtime_surf_limit_ = std::max(1, residual_config_.max_surf_residuals);
+  runtime_non_limit_ = std::max(1, residual_config_.max_non_residuals);
   laserCloudCornerFromLocal.reset(new pcl::PointCloud<PointType>);
   laserCloudSurfFromLocal.reset(new pcl::PointCloud<PointType>);
   laserCloudNonFeatureFromLocal.reset(new pcl::PointCloud<PointType>);
@@ -1049,6 +1061,7 @@ void Estimator::Estimate(std::list<LidarFrame>& lidarFrameList,
     const unsigned int hw_threads = std::max(1u, std::thread::hardware_concurrency());
     const int worker_count = std::min<int>(windowSize, std::max(1u, hw_threads));
     const int frames_per_worker = std::max(1, (windowSize + worker_count - 1) / worker_count);
+    ros::WallTime residual_build_start = ros::WallTime::now();
     if(log_module_timing_){
       ROS_INFO("[Timing] Residual build start %.6f", ros::Time::now().toSec());
     }
@@ -1106,6 +1119,11 @@ void Estimator::Estimate(std::list<LidarFrame>& lidarFrameList,
     }
     if(log_module_timing_){
       ROS_INFO("[Timing] Residual build end   %.6f", ros::Time::now().toSec());
+    }
+    const double residual_build_ms =
+        (ros::WallTime::now() - residual_build_start).toSec() * 1000.0;
+    if(iterOpt == 0){
+      last_residual_build_ms_ = residual_build_ms;
     }
 
     double avg_global_kd = residual_config_.adaptive_corner.low_feature_global_kd + 1.0;
@@ -1173,7 +1191,7 @@ void Estimator::Estimate(std::list<LidarFrame>& lidarFrameList,
     bool low_feature_mode = false;
     bool high_feature_mode = false;
     const auto& adaptive_corner = residual_config_.adaptive_corner;
-    int adaptiveCornerLimit = residual_config_.max_corner_residuals;
+    int adaptiveCornerLimit = runtime_corner_limit_;
     double eigen_ratio_target = adaptive_corner.default_eigen_ratio;
     if(adaptive_corner.enable){
       if(avg_global_kd < adaptive_corner.low_feature_global_kd){
@@ -1188,8 +1206,8 @@ void Estimator::Estimate(std::list<LidarFrame>& lidarFrameList,
     adaptiveCornerLimit = std::max(1, adaptiveCornerLimit);
     corner_eigen_ratio_ = eigen_ratio_target;
     const int maxCornerResidualsPerFrame = adaptiveCornerLimit;
-    const int maxSurfResidualsPerFrame = residual_config_.max_surf_residuals;
-    const int maxNonResidualsPerFrame = residual_config_.max_non_residuals;
+    const int maxSurfResidualsPerFrame = std::max(1, runtime_surf_limit_);
+    const int maxNonResidualsPerFrame = std::max(1, runtime_non_limit_);
     const double featureErrorThreshold = residual_config_.feature_error_threshold;
     auto shouldKeepFeature = [](int idx, int total, int kept, int limit) -> bool {
       if(limit <= 0 || total <= limit) return true;
@@ -1429,6 +1447,15 @@ void Estimator::Estimate(std::list<LidarFrame>& lidarFrameList,
                  iterOpt, candidateCorner, candidateCornerGlobal, candidateCornerLocal, candidateSurf, candidateNon);
         ROS_INFO("Estimator residual kept iter %d: corner=%d (global=%d local=%d) surf=%d non=%d",
                  iterOpt, cntCorner, keptCornerGlobal, keptCornerLocal, cntSurf, cntNon);
+        if(iterOpt == 0){
+          ROS_INFO("Estimator residual timing iter %d: build=%.2f ms solve=%.2f ms runtime_limit(c/s/n)=(%d/%d/%d)",
+                   iterOpt,
+                   last_residual_build_ms_,
+                   last_ceres_solve_ms_,
+                   runtime_corner_limit_,
+                   runtime_surf_limit_,
+                   runtime_non_limit_);
+        }
       }
 
       ceres::Solver::Options options;
@@ -1443,6 +1470,7 @@ void Estimator::Estimate(std::list<LidarFrame>& lidarFrameList,
       options.minimizer_progress_to_stdout = false;
     const unsigned int ceres_threads = std::max(1u, std::thread::hardware_concurrency());
     options.num_threads = static_cast<int>(ceres_threads);
+    ros::WallTime ceres_start = ros::WallTime::now();
     if(log_module_timing_){
       ROS_INFO("[Timing] Ceres solve start %.6f", ros::Time::now().toSec());
     }
@@ -1450,6 +1478,12 @@ void Estimator::Estimate(std::list<LidarFrame>& lidarFrameList,
     ceres::Solve(options, &problem, &summary);
     if(log_module_timing_){
       ROS_INFO("[Timing] Ceres solve end   %.6f", ros::Time::now().toSec());
+    }
+    const double ceres_solve_ms =
+        (ros::WallTime::now() - ceres_start).toSec() * 1000.0;
+    if(iterOpt == 0){
+      last_ceres_solve_ms_ = ceres_solve_ms;
+      UpdateResidualLimits(last_residual_build_ms_, last_ceres_solve_ms_);
     }
     } // problem scope
 
@@ -1601,6 +1635,71 @@ void Estimator::Estimate(std::list<LidarFrame>& lidarFrameList,
   }
 
 }
+
+void Estimator::EnforceLocalMapLimit(pcl::PointCloud<PointType>::Ptr& cloud, int max_points){
+  if(!cloud || max_points <= 0) return;
+  if(static_cast<int>(cloud->points.size()) <= max_points) return;
+  pcl::PointCloud<PointType>::Ptr limited(new pcl::PointCloud<PointType>());
+  limited->points.reserve(max_points);
+  const double step = static_cast<double>(cloud->points.size()) / static_cast<double>(max_points);
+  double cursor = 0.0;
+  for(size_t i = 0; i < cloud->points.size() &&
+                     limited->points.size() < static_cast<size_t>(max_points); ++i){
+    if(static_cast<double>(i) >= cursor){
+      limited->points.push_back(cloud->points[i]);
+      cursor += step;
+    }
+  }
+  limited->width = limited->points.size();
+  limited->height = 1;
+  limited->is_dense = cloud->is_dense;
+  cloud = limited;
+}
+
+void Estimator::UpdateResidualLimits(double build_ms, double solve_ms){
+  auto clamp_limit = [](int value, int min_limit, int max_limit){
+    return std::max(min_limit, std::min(max_limit, value));
+  };
+  const int cfg_corner_max = std::max(1, residual_config_.max_corner_residuals);
+  const int cfg_surf_max = std::max(1, residual_config_.max_surf_residuals);
+  const int cfg_non_max = std::max(1, residual_config_.max_non_residuals);
+  const auto& budget = residual_config_.adaptive_budget;
+  if(!budget.enable){
+    runtime_corner_limit_ = cfg_corner_max;
+    runtime_surf_limit_ = cfg_surf_max;
+    runtime_non_limit_ = cfg_non_max;
+    return;
+  }
+  int min_corner = std::max(1, budget.min_corner_residuals);
+  int min_surf = std::max(1, budget.min_surf_residuals);
+  int min_non = std::max(1, budget.min_non_residuals);
+  runtime_corner_limit_ = clamp_limit(runtime_corner_limit_, min_corner, cfg_corner_max);
+  runtime_surf_limit_ = clamp_limit(runtime_surf_limit_, min_surf, cfg_surf_max);
+  runtime_non_limit_ = clamp_limit(runtime_non_limit_, min_non, cfg_non_max);
+  double pressure_sum = 0.0;
+  int pressure_count = 0;
+  auto accumulate_pressure = [&](double observed, double target){
+    if(target <= 0.0) return;
+    pressure_sum += (observed - target) / target;
+    ++pressure_count;
+  };
+  accumulate_pressure(build_ms, budget.target_residual_build_ms);
+  accumulate_pressure(solve_ms, budget.target_ceres_solve_ms);
+  if(pressure_count == 0) return;
+  double avg_pressure = pressure_sum / static_cast<double>(pressure_count);
+  if(std::fabs(avg_pressure) < budget.tolerance_ratio){
+    return;
+  }
+  int direction = avg_pressure > 0.0 ? -1 : 1;
+  auto adjust_limit = [&](int& current, int min_limit, int max_limit){
+    int delta = std::max(1, static_cast<int>(current * budget.adjust_ratio));
+    current = clamp_limit(current + direction * delta, min_limit, max_limit);
+  };
+  adjust_limit(runtime_corner_limit_, min_corner, cfg_corner_max);
+  adjust_limit(runtime_surf_limit_, min_surf, cfg_surf_max);
+  adjust_limit(runtime_non_limit_, min_non, cfg_non_max);
+}
+
 void Estimator::MapIncrementLocal(const pcl::PointCloud<PointType>::Ptr& laserCloudCornerStack,
                                   const pcl::PointCloud<PointType>::Ptr& laserCloudSurfStack,
                                   const pcl::PointCloud<PointType>::Ptr& laserCloudNonFeatureStack,
@@ -1674,5 +1773,8 @@ void Estimator::MapIncrementLocal(const pcl::PointCloud<PointType>::Ptr& laserCl
   downSizeFilterNonFeature.setInputCloud(laserCloudNonFeatureFromLocal);
   downSizeFilterNonFeature.filter(*temp3);
   laserCloudNonFeatureFromLocal = temp3;
+  EnforceLocalMapLimit(laserCloudCornerFromLocal, local_corner_max_points_);
+  EnforceLocalMapLimit(laserCloudSurfFromLocal, local_surf_max_points_);
+  EnforceLocalMapLimit(laserCloudNonFeatureFromLocal, local_non_max_points_);
   localMapID ++;
 }

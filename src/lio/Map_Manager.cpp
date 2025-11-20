@@ -1,15 +1,75 @@
 #include "MapManager/Map_Manager.h"
 #include <fstream>
 #include <algorithm>
+#include <cmath>
+
+namespace {
+constexpr double kCubeSize = 50.0;
+
+int ResolveHalfFromRange(double range_m, int fallback_half){
+  if(range_m <= 0.0){
+    return std::max(1, fallback_half);
+  }
+  return std::max(1, static_cast<int>(std::ceil(range_m / kCubeSize)));
+}
+
+int ResolveSideHalf(const MapManagerConfig& config){
+  int fallback_width = std::max(3, config.width);
+  return ResolveHalfFromRange(config.map_side_range, fallback_width / 2);
+}
+
+int ResolveVerticalHalf(const MapManagerConfig& config){
+  int fallback_height = std::max(3, config.height);
+  return ResolveHalfFromRange(config.map_vertical_range, fallback_height / 2);
+}
+
+int ResolveForwardHalf(const MapManagerConfig& config){
+  int fallback_depth = std::max(3, config.depth);
+  int fallback_forward = fallback_depth / 2;
+  return ResolveHalfFromRange(config.map_forward_range, fallback_forward);
+}
+
+int ResolveBackwardHalf(const MapManagerConfig& config){
+  int fallback_depth = std::max(3, config.depth);
+  int fallback_forward = fallback_depth / 2;
+  int fallback_backward = fallback_depth - fallback_forward - 1;
+  if(fallback_backward < 1){
+    fallback_backward = fallback_forward;
+  }
+  return ResolveHalfFromRange(config.map_backward_range, fallback_backward);
+}
+
+int ResolveWidth(const MapManagerConfig& config){
+  return ResolveSideHalf(config) * 2 + 1;
+}
+
+int ResolveHeight(const MapManagerConfig& config){
+  return ResolveVerticalHalf(config) * 2 + 1;
+}
+
+int ResolveDepth(const MapManagerConfig& config){
+  return ResolveForwardHalf(config) + ResolveBackwardHalf(config) + 1;
+}
+
+template <typename PointT>
+void ResetKdTree(typename pcl::KdTreeFLANN<PointT>::Ptr& tree){
+  tree.reset(new pcl::KdTreeFLANN<PointT>());
+}
+}  // namespace
 
 MAP_MANAGER::MAP_MANAGER(const float& filter_corner,
                          const float& filter_surf,
                          const MapManagerConfig& config)
-    : laserCloudWidth(std::max(8, config.width)),
-      laserCloudHeight(std::max(3, config.height)),
-      laserCloudDepth(std::max(8, config.depth)),
+    : laserCloudWidth(std::max(3, ResolveWidth(config))),
+      laserCloudHeight(std::max(3, ResolveHeight(config))),
+      laserCloudDepth(std::max(3, ResolveDepth(config))),
       laserCloudNum(laserCloudWidth * laserCloudHeight * laserCloudDepth),
       localMapWindowSize(std::max(10, config.local_window)),
+      forward_cube_limit_(ResolveForwardHalf(config)),
+      backward_cube_limit_(ResolveBackwardHalf(config)),
+      side_cube_limit_(ResolveSideHalf(config)),
+      vertical_cube_limit_(ResolveVerticalHalf(config)),
+      enable_cube_prune_(config.enable_cube_prune),
       laserCloudCenWidth(laserCloudWidth / 2),
       laserCloudCenHeight(laserCloudHeight / 2),
       laserCloudCenDepth(laserCloudDepth / 2),
@@ -168,6 +228,7 @@ void MAP_MANAGER::MapIncrement(const pcl::PointCloud<PointType>::Ptr& laserCloud
   
   t1 = clock();
   MapMove(transformTobeMapped);
+  PruneFarCubes();
 
   t2 = clock();
   int laserCloudCornerStackNum = laserCloudCornerStack->points.size();
@@ -591,6 +652,37 @@ void MAP_MANAGER::MapMove(const Eigen::Matrix4d& transformTobeMapped){
     laserCloudCenHeight--;
   }
 
+}
+
+void MAP_MANAGER::PruneFarCubes(){
+  if(!enable_cube_prune_){
+    return;
+  }
+  const int depth = laserCloudDepth;
+  const int width = laserCloudWidth;
+  const int height = laserCloudHeight;
+  for(int i = 0; i < depth; ++i){
+    int offset_i = i - laserCloudCenDepth;
+    bool out_forward = offset_i > forward_cube_limit_;
+    bool out_backward = offset_i < -backward_cube_limit_;
+    for(int j = 0; j < width; ++j){
+      int offset_j = j - laserCloudCenWidth;
+      bool out_side = std::abs(offset_j) > side_cube_limit_;
+      for(int k = 0; k < height; ++k){
+        int offset_k = k - laserCloudCenHeight;
+        bool out_vertical = std::abs(offset_k) > vertical_cube_limit_;
+        if(out_forward || out_backward || out_side || out_vertical){
+          size_t idx = ToIndex(i, j, k);
+          laserCloudCornerArray[idx]->clear();
+          laserCloudSurfArray[idx]->clear();
+          laserCloudNonFeatureArray[idx]->clear();
+          ResetKdTree<PointType>(laserCloudCornerKdMap[idx]);
+          ResetKdTree<PointType>(laserCloudSurfKdMap[idx]);
+          ResetKdTree<PointType>(laserCloudNonFeatureKdMap[idx]);
+        }
+      }
+    }
+  }
 }
 
 std::shared_ptr<MAP_MANAGER::MapSnapshot> MAP_MANAGER::AcquireSnapshot(){

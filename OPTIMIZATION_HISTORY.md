@@ -93,6 +93,14 @@
   - `horizon_params.yaml` 补充上述两个配置，默认 `false` 以保持安静输出，需要调试时再启用。
 - **作用**：让现场运行保持最小日志与计算开销，同时在需要排查角点不足、KD-tree 命中率等问题时可以“即开即用”，避免每次都改代码重新编译。
 
+## 15. `pending` “Adaptive residual budget + 局部地图限流”
+- **改动内容**：
+  - 在 `MapManagerConfig`/`horizon_params.yaml` 中新增 `local_box_*`（前/后/侧/上下包围盒）与 `local_*_max_points`（corner/surf/non 最大点数）参数，`MapIncrementLocal` 依据配置对局部地图做再次抽样，保证 KD-tree 输入点数在受控范围内，防止停车场等高密度场景让内存与建树时间失控。
+  - `EstimatorResidualConfig` 引入 `adaptive_budget`，通过 `ros::WallTime` 记录残差构建与 Ceres 求解耗时，若超过 `target_build_ms` / `target_solve_ms` 则按 `adjust_ratio` 自动下调角/面/非特征配额，低于目标则缓慢回升。运行时限额存于 `runtime_*_limit_`，并与已有的角点自适应（low/high feature）组合使用。
+  - `PoseEstimation` / `horizon_params.yaml` 新增上述所有参数，可按任务需要在 YAML 中直接调目标时延、容差、最小残差数量等；`Estimator` 在 `log_feature_counts=true` 时会打印“timing + runtime limit”以便复盘。
+  - 针对地图立方体尺寸，增加 `map_forward/backward/side/vertical_range` 与 `enable_cube_prune` 配置：可按场景（隧道/停车场）设置前后/左右/上下覆盖范围，构造函数按范围自动计算 cube 数量。`MapManager` 新增 `PruneFarCubes()`，对超出范围的 cube 即时清空 `PointCloud` 与 KD-tree，避免 4851 个 cube 全部常驻造成 RSS 线性增长。
+- **作用**：局部地图点数受控后，KD-tree 与残差构建的 RSS 和耗时稳定在 Jetson 可承受的区间；自适应残差预算让 Ceres solve 在停车场/球场等高密度环境中自动降负载，而隧道等稀疏场景仍可维持足够角点（由 `min_*_residuals` 和低特征保底共同保障），从而同时兼顾实时性与里程计精度。
+
 ---
 
 > 如需查看某个提交的具体 diff，可直接在仓库中运行 `git show <commit>`。本文件仅概述改动动机与收益，以便团队成员快速了解版本演进。

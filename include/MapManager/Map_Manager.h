@@ -16,6 +16,19 @@ struct MapManagerConfig{
   int height = 11;
   int depth = 21;
   int local_window = 60;
+  int map_skip_frame = 2;
+  double local_box_forward = 40.0;
+  double local_box_backward = 8.0;
+  double local_box_side = 8.0;
+  double local_box_vertical = 6.0;
+  int local_corner_max_points = 180000;
+  int local_surf_max_points = 240000;
+  int local_non_max_points = 120000;
+  double map_forward_range = 0.0;
+  double map_backward_range = 0.0;
+  double map_side_range = 0.0;
+  double map_vertical_range = 0.0;
+  bool enable_cube_prune = true;
 };
 
 class MAP_MANAGER{
@@ -135,6 +148,12 @@ public:
     std::array<std::vector<pcl::PointCloud<PointType>>, kMatchBufferCount> laserCloudNonFeature_for_match;
 
 private:
+    void PruneFarCubes();
+    int forward_cube_limit_ = 0;
+    int backward_cube_limit_ = 0;
+    int side_cube_limit_ = 0;
+    int vertical_cube_limit_ = 0;
+    bool enable_cube_prune_ = true;
     int laserCloudCenWidth;
     int laserCloudCenHeight;
     int laserCloudCenDepth;

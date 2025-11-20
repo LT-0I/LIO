@@ -3,6 +3,19 @@ map_width: 21
 map_height: 11
 map_depth: 21
 map_local_window: 60
+map_skip_frame: 3
+map_forward_range: 0.0
+map_backward_range: 0.0
+map_side_range: 0.0
+map_vertical_range: 0.0
+enable_cube_prune: true
+local_box_forward: 40.0
+local_box_backward: 8.0
+local_box_side: 8.0
+local_box_vertical: 6.0
+local_corner_max_points: 180000
+local_surf_max_points: 240000
+local_non_max_points: 120000
 max_corner_residuals: 500
 max_surf_residuals: 750
 max_non_residuals: 350
@@ -16,4 +29,12 @@ corner_adaptive_low_feature_global_kd: 80
 corner_adaptive_low_feature_min_keep: 200
 corner_adaptive_high_feature_global_kd: 800
 corner_adaptive_high_feature_max_keep: 400
+adaptive_budget_enable: true
+adaptive_budget_target_build_ms: 8.0
+adaptive_budget_target_solve_ms: 25.0
+adaptive_budget_tolerance: 0.2
+adaptive_budget_adjust_ratio: 0.15
+adaptive_budget_min_corner_residuals: 200
+adaptive_budget_min_surf_residuals: 450
+adaptive_budget_min_non_residuals: 250
 

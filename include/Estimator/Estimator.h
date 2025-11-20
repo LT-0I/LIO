@@ -32,6 +32,17 @@ struct CornerAdaptiveConfig{
 	int high_feature_max_keep = 400;
 };
 
+struct ResidualBudgetConfig{
+	bool enable = false;
+	double target_residual_build_ms = 8.0;
+	double target_ceres_solve_ms = 25.0;
+	double tolerance_ratio = 0.2;
+	double adjust_ratio = 0.15;
+	int min_corner_residuals = 200;
+	int min_surf_residuals = 450;
+	int min_non_residuals = 250;
+};
+
 struct EstimatorResidualConfig{
 	int max_corner_residuals = 500;
 	int max_surf_residuals = 750;
@@ -39,6 +50,7 @@ struct EstimatorResidualConfig{
 	double feature_error_threshold = 1e-5;
 	bool log_feature_counts = false;
 	CornerAdaptiveConfig adaptive_corner;
+	ResidualBudgetConfig adaptive_budget;
 };
 
 class Estimator{
@@ -331,6 +343,17 @@ private:
 	double thres_dist = 1.0;
 	double corner_eigen_ratio_ = 3.0;
 	bool log_module_timing_ = false;
+	int runtime_corner_limit_ = 0;
+	int runtime_surf_limit_ = 0;
+	int runtime_non_limit_ = 0;
+	double last_residual_build_ms_ = 0.0;
+	double last_ceres_solve_ms_ = 0.0;
+	int local_corner_max_points_ = 0;
+	int local_surf_max_points_ = 0;
+	int local_non_max_points_ = 0;
+
+	void UpdateResidualLimits(double build_ms, double solve_ms);
+	void EnforceLocalMapLimit(pcl::PointCloud<PointType>::Ptr& cloud, int max_points);
 };
 
 #endif //LIO_LIVOX_ESTIMATOR_H

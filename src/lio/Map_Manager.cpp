@@ -194,16 +194,8 @@ void MAP_MANAGER::featureAssociateToMap(const pcl::PointCloud<PointType>::Ptr& l
  * \param[in] laserCloudSurfStack: surf feature points that need to be added to map
  * \param[in] transformTobeMapped: transform matrix of the lidar pose
  */
-void MAP_MANAGER::MapIncrement(const pcl::PointCloud<PointType>::Ptr& laserCloudCornerStack,
-                               const pcl::PointCloud<PointType>::Ptr& laserCloudSurfStack,
-                               const pcl::PointCloud<PointType>::Ptr& laserCloudNonFeatureStack,
-                               const Eigen::Matrix4d& transformTobeMapped){
-  
-  clock_t t0,t1,t2,t3,t4,t5;
-  t0 = clock();
-  std::unique_lock<std::mutex> locker2(mtx_MapManager);
-  const int write_idx = staging_idx;
-  snapshot_cv.wait(locker2, [this, write_idx](){ return snapshot_ref_count[write_idx].load() == 0; });
+void MAP_MANAGER::FullSnapshotCopy(int write_idx){
+  // Full copy for initialization - O(laserCloudNum)
   for(int i = 0; i < laserCloudNum; i++){
     CornerKdMap_last[write_idx][i] = *laserCloudCornerKdMap[i];
     SurfKdMap_last[write_idx][i] = *laserCloudSurfKdMap[i];
@@ -212,6 +204,44 @@ void MAP_MANAGER::MapIncrement(const pcl::PointCloud<PointType>::Ptr& laserCloud
     laserCloudCorner_for_match[write_idx][i] = *laserCloudCornerArray[i];
     laserCloudNonFeature_for_match[write_idx][i] = *laserCloudNonFeatureArray[i];
   }
+}
+
+void MAP_MANAGER::IncrementalSnapshotCopy(int write_idx, const std::vector<size_t>& dirty_indices){
+  // Only copy cubes that were modified - O(dirty_count) instead of O(laserCloudNum)
+  for(size_t idx : dirty_indices){
+    if(idx < static_cast<size_t>(laserCloudNum)){
+      CornerKdMap_last[write_idx][idx] = *laserCloudCornerKdMap[idx];
+      SurfKdMap_last[write_idx][idx] = *laserCloudSurfKdMap[idx];
+      NonFeatureKdMap_last[write_idx][idx] = *laserCloudNonFeatureKdMap[idx];
+      laserCloudSurf_for_match[write_idx][idx] = *laserCloudSurfArray[idx];
+      laserCloudCorner_for_match[write_idx][idx] = *laserCloudCornerArray[idx];
+      laserCloudNonFeature_for_match[write_idx][idx] = *laserCloudNonFeatureArray[idx];
+    }
+  }
+}
+
+void MAP_MANAGER::MapIncrement(const pcl::PointCloud<PointType>::Ptr& laserCloudCornerStack,
+                               const pcl::PointCloud<PointType>::Ptr& laserCloudSurfStack,
+                               const pcl::PointCloud<PointType>::Ptr& laserCloudNonFeatureStack,
+                               const Eigen::Matrix4d& transformTobeMapped){
+
+  clock_t t0,t1,t2,t3,t4,t5;
+  t0 = clock();
+  std::unique_lock<std::mutex> locker2(mtx_MapManager);
+  const int write_idx = staging_idx;
+  snapshot_cv.wait(locker2, [this, write_idx](){ return snapshot_ref_count[write_idx].load() == 0; });
+
+  // Snapshot copy strategy: full copy on first frame, incremental thereafter
+  if(!snapshot_initialized_){
+    // First frame: full copy to both buffers
+    FullSnapshotCopy(0);
+    FullSnapshotCopy(1);
+    snapshot_initialized_ = true;
+  } else if(!dirty_cube_indices_.empty()){
+    // Subsequent frames: only copy dirty cubes from previous frame
+    IncrementalSnapshotCopy(write_idx, dirty_cube_indices_);
+  }
+  dirty_cube_indices_.clear();
 
   laserCloudCenWidth_last_buf[write_idx] = laserCloudCenWidth;
   laserCloudCenHeight_last_buf[write_idx] = laserCloudCenHeight;
@@ -349,7 +379,17 @@ void MAP_MANAGER::MapIncrement(const pcl::PointCloud<PointType>::Ptr& laserCloud
   }
 
   t4 = clock();
-  // Removed historical copy buffers to reduce memory footprint
+
+  // Collect dirty cube indices for incremental snapshot in next frame
+  // This replaces O(4851) full copy with O(dirty_count) partial copy
+  dirty_cube_indices_.clear();
+  dirty_cube_indices_.reserve(100);  // Typical frame touches ~10-50 cubes
+  for(int i = 0; i < laserCloudNum; i++){
+    if(CornerChangeFlag[i] || SurfChangeFlag[i] || NonFeatureChangeFlag[i]){
+      dirty_cube_indices_.push_back(static_cast<size_t>(i));
+    }
+  }
+
   t5 = clock();
 
   currentUpdatePos ++;

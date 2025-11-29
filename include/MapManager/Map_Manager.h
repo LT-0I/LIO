@@ -152,6 +152,10 @@ public:
 
 private:
     void PruneFarCubes();
+    void IncrementalSnapshotCopy(int write_idx, const std::vector<size_t>& dirty_indices);
+    void FullSnapshotCopy(int write_idx);  // Full copy for initialization
+    std::vector<size_t> dirty_cube_indices_;  // Indices of cubes modified in current frame
+    bool snapshot_initialized_ = false;  // Track if snapshot buffers need full init
     int forward_cube_limit_ = 0;
     int backward_cube_limit_ = 0;
     int side_cube_limit_ = 0;

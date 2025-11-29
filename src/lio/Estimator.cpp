@@ -10,7 +10,10 @@ Estimator::Estimator(const float& filter_corner,
                      const EstimatorResidualConfig& residual_config,
                      bool log_module_timing)
 : residual_config_(residual_config),
-  log_module_timing_(log_module_timing){
+  log_module_timing_(log_module_timing),
+  voxelCornerLocal_(map_config.voxel_index_resolution),
+  voxelSurfLocal_(map_config.voxel_index_resolution),
+  voxelNonLocal_(map_config.voxel_index_resolution){
   corner_eigen_ratio_ = residual_config_.adaptive_corner.default_eigen_ratio;
   localBoxForward = map_config.local_box_forward;
   localBoxBackward = map_config.local_box_backward;
@@ -20,6 +23,8 @@ Estimator::Estimator(const float& filter_corner,
   local_corner_max_points_ = std::max(0, map_config.local_corner_max_points);
   local_surf_max_points_ = std::max(0, map_config.local_surf_max_points);
   local_non_max_points_ = std::max(0, map_config.local_non_max_points);
+  use_voxel_index_local_ = map_config.use_voxel_index_local;
+  voxel_index_resolution_ = map_config.voxel_index_resolution;
   runtime_corner_limit_ = std::max(1, residual_config_.max_corner_residuals);
   runtime_surf_limit_ = std::max(1, residual_config_.max_surf_residuals);
   runtime_non_limit_ = std::max(1, residual_config_.max_non_residuals);
@@ -276,8 +281,14 @@ void Estimator::processPointToLine(std::vector<std::unique_ptr<ceres::CostFuncti
     }
 
     if(laserCloudCornerLocal->points.size() > 20 ){
-      kdtreeLocal->nearestKSearch(_pointSel, 5, _pointSearchInd2, _pointSearchSqDis2);
-      if (_pointSearchSqDis2[4] < thres_dist) {
+      int local_found = 0;
+      if (use_voxel_index_local_ && !voxelCornerLocal_.empty()) {
+        local_found = voxelCornerLocal_.radiusSearch(_pointSel, std::sqrt(thres_dist), _pointSearchInd2, _pointSearchSqDis2, 5);
+      } else {
+        kdtreeLocal->nearestKSearch(_pointSel, 5, _pointSearchInd2, _pointSearchSqDis2);
+        local_found = (_pointSearchSqDis2.size() >= 5 && _pointSearchSqDis2[4] < thres_dist) ? 5 : 0;
+      }
+      if (local_found >= 5 && _pointSearchSqDis2[4] < thres_dist) {
         if(stats) stats->local_kd_success++;
 
         debug_num2 ++;
@@ -474,10 +485,16 @@ void Estimator::processPointToPlan(std::vector<std::unique_ptr<ceres::CostFuncti
       }
     }
     if(laserCloudSurfLocal->points.size() > 20 ){
-    kdtreeLocal->nearestKSearch(_pointSel, 5, _pointSearchInd2, _pointSearchSqDis2);
-    if (_pointSearchSqDis2[4] < 1.0) {
+    int local_found = 0;
+    if (use_voxel_index_local_ && !voxelSurfLocal_.empty()) {
+      local_found = voxelSurfLocal_.radiusSearch(_pointSel, 1.0f, _pointSearchInd2, _pointSearchSqDis2, 5);
+    } else {
+      kdtreeLocal->nearestKSearch(_pointSel, 5, _pointSearchInd2, _pointSearchSqDis2);
+      local_found = (_pointSearchSqDis2.size() >= 5 && _pointSearchSqDis2[4] < 1.0) ? 5 : 0;
+    }
+    if (local_found >= 5 && _pointSearchSqDis2[4] < 1.0) {
       debug_num2++;
-      for (int j = 0; j < 5; j++) { 
+      for (int j = 0; j < 5; j++) {
         _matA0(j, 0) = laserCloudSurfLocal->points[_pointSearchInd2[j]].x;
         _matA0(j, 1) = laserCloudSurfLocal->points[_pointSearchInd2[j]].y;
         _matA0(j, 2) = laserCloudSurfLocal->points[_pointSearchInd2[j]].z;
@@ -647,10 +664,16 @@ void Estimator::processPointToPlanVec(std::vector<std::unique_ptr<ceres::CostFun
 
 
     if(laserCloudSurfLocal->points.size() > 20 ){
-    kdtreeLocal->nearestKSearch(_pointSel, 5, _pointSearchInd2, _pointSearchSqDis2);
-    if (_pointSearchSqDis2[4] < thres_dist) {
+    int local_found = 0;
+    if (use_voxel_index_local_ && !voxelSurfLocal_.empty()) {
+      local_found = voxelSurfLocal_.radiusSearch(_pointSel, std::sqrt(thres_dist), _pointSearchInd2, _pointSearchSqDis2, 5);
+    } else {
+      kdtreeLocal->nearestKSearch(_pointSel, 5, _pointSearchInd2, _pointSearchSqDis2);
+      local_found = (_pointSearchSqDis2.size() >= 5 && _pointSearchSqDis2[4] < thres_dist) ? 5 : 0;
+    }
+    if (local_found >= 5 && _pointSearchSqDis2[4] < thres_dist) {
       debug_num2++;
-      for (int j = 0; j < 5; j++) { 
+      for (int j = 0; j < 5; j++) {
         _matA0(j, 0) = laserCloudSurfLocal->points[_pointSearchInd2[j]].x;
         _matA0(j, 1) = laserCloudSurfLocal->points[_pointSearchInd2[j]].y;
         _matA0(j, 2) = laserCloudSurfLocal->points[_pointSearchInd2[j]].z;
@@ -814,9 +837,15 @@ void Estimator::processNonFeatureICP(std::vector<std::unique_ptr<ceres::CostFunc
     }
 
     if(laserCloudNonFeatureLocal->points.size() > 20 ){
-      kdtreeLocal->nearestKSearch(_pointSel, 5, _pointSearchInd2, _pointSearchSqDis2);
-      if (_pointSearchSqDis2[4] < 1 * thres_dist) {
-        for (int j = 0; j < 5; j++) { 
+      int local_found = 0;
+      if (use_voxel_index_local_ && !voxelNonLocal_.empty()) {
+        local_found = voxelNonLocal_.radiusSearch(_pointSel, std::sqrt(thres_dist), _pointSearchInd2, _pointSearchSqDis2, 5);
+      } else {
+        kdtreeLocal->nearestKSearch(_pointSel, 5, _pointSearchInd2, _pointSearchSqDis2);
+        local_found = (_pointSearchSqDis2.size() >= 5 && _pointSearchSqDis2[4] < thres_dist) ? 5 : 0;
+      }
+      if (local_found >= 5 && _pointSearchSqDis2[4] < thres_dist) {
+        for (int j = 0; j < 5; j++) {
           _matA0(j, 0) = laserCloudNonFeatureLocal->points[_pointSearchInd2[j]].x;
           _matA0(j, 1) = laserCloudNonFeatureLocal->points[_pointSearchInd2[j]].y;
           _matA0(j, 2) = laserCloudNonFeatureLocal->points[_pointSearchInd2[j]].z;
@@ -1776,5 +1805,12 @@ void Estimator::MapIncrementLocal(const pcl::PointCloud<PointType>::Ptr& laserCl
   EnforceLocalMapLimit(laserCloudCornerFromLocal, local_corner_max_points_);
   EnforceLocalMapLimit(laserCloudSurfFromLocal, local_surf_max_points_);
   EnforceLocalMapLimit(laserCloudNonFeatureFromLocal, local_non_max_points_);
+
+  // Build VoxelIndex for O(1) local map search (space-time tradeoff)
+  if (use_voxel_index_local_) {
+    voxelCornerLocal_.buildIndex(laserCloudCornerFromLocal);
+    voxelSurfLocal_.buildIndex(laserCloudSurfFromLocal);
+    voxelNonLocal_.buildIndex(laserCloudNonFeatureFromLocal);
+  }
   localMapID ++;
 }

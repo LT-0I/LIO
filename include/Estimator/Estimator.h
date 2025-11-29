@@ -19,6 +19,7 @@
 #include <memory>
 #include "MapManager/Map_Manager.h"
 #include "utils/ceresfunc.h"
+#include "utils/VoxelIndex.h"
 #include "IMUIntegrator/IMUIntegrator.h"
 #include <chrono>
 
@@ -305,6 +306,13 @@ private:
 	pcl::KdTreeFLANN<PointType>::Ptr kdtreeCornerFromLocal;
 	pcl::KdTreeFLANN<PointType>::Ptr kdtreeSurfFromLocal;
 	pcl::KdTreeFLANN<PointType>::Ptr kdtreeNonFeatureFromLocal;
+
+	// VoxelIndex for O(1) local map search (space-time tradeoff)
+	VoxelIndex voxelCornerLocal_;
+	VoxelIndex voxelSurfLocal_;
+	VoxelIndex voxelNonLocal_;
+	bool use_voxel_index_local_ = true;
+	float voxel_index_resolution_ = 0.5f;
 	pcl::VoxelGrid<PointType> downSizeFilterCorner;
 	pcl::VoxelGrid<PointType> downSizeFilterSurf;
 	pcl::VoxelGrid<PointType> downSizeFilterNonFeature;

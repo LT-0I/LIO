@@ -29,6 +29,9 @@ struct MapManagerConfig{
   double map_side_range = 0.0;
   double map_vertical_range = 0.0;
   bool enable_cube_prune = true;
+  // VoxelIndex configuration
+  bool use_voxel_index_local = true;
+  float voxel_index_resolution = 0.5f;
 };
 
 class MAP_MANAGER{

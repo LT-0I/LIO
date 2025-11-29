@@ -662,6 +662,8 @@ int main(int argc, char** argv)
   int adaptive_budget_min_corner_residuals = 200;
   int adaptive_budget_min_surf_residuals = 450;
   int adaptive_budget_min_non_residuals = 250;
+  bool use_voxel_index_local = true;
+  float voxel_index_resolution = 0.5f;
   ros::param::param("~map_width", map_width, map_width);
   ros::param::param("~map_height", map_height, map_height);
   ros::param::param("~map_depth", map_depth, map_depth);
@@ -700,6 +702,8 @@ int main(int argc, char** argv)
   ros::param::param("~adaptive_budget_min_corner_residuals", adaptive_budget_min_corner_residuals, adaptive_budget_min_corner_residuals);
   ros::param::param("~adaptive_budget_min_surf_residuals", adaptive_budget_min_surf_residuals, adaptive_budget_min_surf_residuals);
   ros::param::param("~adaptive_budget_min_non_residuals", adaptive_budget_min_non_residuals, adaptive_budget_min_non_residuals);
+  ros::param::param("~use_voxel_index_local", use_voxel_index_local, use_voxel_index_local);
+  ros::param::param("~voxel_index_resolution", voxel_index_resolution, voxel_index_resolution);
 
   MapManagerConfig map_config;
   map_config.width = map_width;
@@ -719,6 +723,8 @@ int main(int argc, char** argv)
   map_config.local_corner_max_points = local_corner_max_points;
   map_config.local_surf_max_points = local_surf_max_points;
   map_config.local_non_max_points = local_non_max_points;
+  map_config.use_voxel_index_local = use_voxel_index_local;
+  map_config.voxel_index_resolution = voxel_index_resolution;
 
   EstimatorResidualConfig residual_config;
   residual_config.max_corner_residuals = max_corner_residuals;

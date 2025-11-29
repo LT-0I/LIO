@@ -59,10 +59,11 @@ add_executable (ScanRegistration
         	src/segment/pointsCorrect.cpp)
 target_link_libraries(ScanRegistration ${catkin_LIBRARIES} ${PCL_LIBRARIES} ${OpenCV_LIBRARIES})
 
-add_executable (PoseEstimation 
+add_executable (PoseEstimation
 		src/lio/PoseEstimation.cpp
 		src/lio/Estimator.cpp
 		src/lio/IMUIntegrator.cpp
-		src/lio/ceresfunc.cpp 
-		src/lio/Map_Manager.cpp)
+		src/lio/ceresfunc.cpp
+		src/lio/Map_Manager.cpp
+		src/lio/VoxelIndex.cpp)
 target_link_libraries(PoseEstimation ${catkin_LIBRARIES} ${PCL_LIBRARIES} ${CERES_LIBRARIES} OpenMP::OpenMP_CXX)

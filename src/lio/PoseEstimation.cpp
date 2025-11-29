@@ -188,10 +188,11 @@ bool TryMAPInitialization() {
   para_quat[3] = 0;
 
 
-  ceres::LocalParameterization *quatParam = new ceres::QuaternionParameterization();
+  ceres::Manifold *quatManifold = new ceres::QuaternionManifold();
   ceres::Problem problem_quat;
   
-  problem_quat.AddParameterBlock(para_quat, 4, quatParam);
+  problem_quat.AddParameterBlock(para_quat, 4);
+  problem_quat.SetManifold(para_quat, quatManifold);
 
   problem_quat.AddResidualBlock(Cost_Initial_G::Create(average_acc),
                                 nullptr,
@@ -750,4 +751,3 @@ int main(int argc, char** argv)
 
   return 0;
 }
-

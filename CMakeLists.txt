@@ -32,6 +32,7 @@ find_package(PCL REQUIRED)
 find_package(Ceres REQUIRED)
 find_package(OpenCV 4.2.0 REQUIRED)
 find_package(SuiteSparse REQUIRED)
+find_package(OpenMP REQUIRED)
 
 include_directories(include
         	    ${catkin_INCLUDE_DIRS}
@@ -64,4 +65,4 @@ add_executable (PoseEstimation
 		src/lio/IMUIntegrator.cpp
 		src/lio/ceresfunc.cpp 
 		src/lio/Map_Manager.cpp)
-target_link_libraries(PoseEstimation ${catkin_LIBRARIES} ${PCL_LIBRARIES} ${CERES_LIBRARIES})
+target_link_libraries(PoseEstimation ${catkin_LIBRARIES} ${PCL_LIBRARIES} ${CERES_LIBRARIES} OpenMP::OpenMP_CXX)

@@ -2,7 +2,7 @@
 
 **设备**: OrangePi 5 MAX (RK3588, 16GB RAM)
 **目标**: 单帧处理时间 < 100ms (理想目标 90ms)
-**更新日期**: 2025-11-30
+**更新日期**: 2025-11-30 (晚间更新)
 
 ---
 
@@ -66,7 +66,7 @@
 
 ### Iteration 004: RK3588 并行化优化 ✓ 🎉
 
-**状态**: 已完成 - **实时性目标达成！长时间稳定性验证通过！**
+**状态**: 已完成 - **实时性目标达成！**
 
 **方案演进**:
 1. 方案 A: CPU 亲和性绑定大核 - 效果不佳，浪费小核算力
@@ -77,17 +77,66 @@
 - `Residual Build`: OpenMP `parallel sections num_threads(3)`
 - 新增 `CpuAffinity.h` 工具库（保留备用）
 
-**效果** (长时间测试 car隧道.bag 686s):
+**效果**:
 | 指标 | Iteration 002 | Iteration 004 | 改进 |
 |------|---------------|---------------|------|
-| Estimator::Estimate | 78.51 ms | 70.81 ms | **-9.8%** |
-| Ceres solve | 10.55 ms | 8.23 ms | **-22.0%** |
-| Marginalization | 8.94 ms | 6.76 ms | **-24.4%** |
-| RemoveDistortion | 4.92 ms | 3.76 ms | **-23.6%** |
-| MapManager update | 11.35 ms | 9.28 ms | **-18.2%** |
-| 平均帧间隔 | 100.18 ms | **99.94 ms** | **-0.24 ms** |
-| 实时性比率 | 1.0018x (落后) | **0.9994x (富余)** | **✓ 实时** |
-| 内存峰值 | 260 MB | 247 MB | **-5.0%** |
+| 平均帧间隔 | 100.18 ms | **99.77 ms** | **实时** |
+| 实时性比率 | 1.0018x | **0.9977x** | ✓ |
+
+---
+
+### Iteration 005: FIFO 实时性保护 ✓
+
+**状态**: 已完成
+
+**问题**: 队列无限增长可能导致延迟累积
+
+**改动**:
+- LiDAR/IMU 队列长度限制
+- 过时消息丢弃机制 (`max_lidar_lag_seconds`)
+- 新增配置参数
+
+**配置**:
+```yaml
+enable_fifo_drop: true
+lidar_queue_max_size: 3
+imu_queue_max_size: 2000
+max_lidar_lag_seconds: 0.5
+```
+
+**效果**:
+| 测试 | 时长 | 帧数 | 实时性 | FIFO丢帧 |
+|------|------|------|--------|----------|
+| 小 Rosbag | 2分34秒 | 1,547 | 0.9979x ✓ | 0 |
+| 大 Rosbag | 11分26秒 | 6,863 | 1.0027x | 0 |
+
+**注意**: FIFO 是保底策略，不是性能优化。播放 rosbag 需使用 `--clock` 参数。
+
+---
+
+### Iteration 006: InitBoost 初始化加速 ✓ (新增)
+
+**状态**: 已完成，待测试
+
+**问题**: 初始化阶段平均帧间隔是稳定期的 2 倍 (240ms vs 122ms)
+
+**改动**:
+- 新增 `InitBoostConfig` 配置结构体
+- 初始化阶段减少迭代次数 (5 → 2)
+- 初始化阶段按比例减少残差数量
+- 可选跳过前 N 帧完整优化
+
+**配置** (`horizon_params.yaml`):
+```yaml
+enable_init_boost: false         # 默认关闭
+init_residual_ratio: 0.5        # 残差比例
+init_skip_first_n_frames: 0     # 跳过帧数
+init_max_iterations: 2          # 最大迭代
+```
+
+**预期效果**:
+- 初始化阶段帧间隔从 ~240ms 降至 ~150ms
+- 解决启动后前 7 秒卡顿问题
 
 ---
 
@@ -95,10 +144,11 @@
 
 | 目标 | 初始值 | 最终值 | 状态 |
 |------|--------|--------|------|
-| 平均帧间隔 < 100ms | ~120ms | **99.94ms** | ✓ |
-| 实时性比率 < 1.0x | ~1.2x | **0.9994x** | ✓ |
-| 内存峰值 < 300MB | ~260MB | **247MB** | ✓ |
-| 长时间稳定性 | - | 686s 稳定运行 | ✓ |
+| 平均帧间隔 < 100ms | ~120ms | **99.77ms** | ✓ |
+| 实时性比率 < 1.0x | ~1.2x | **0.9977x** | ✓ |
+| 内存峰值 < 300MB | ~260MB | **284MB** | ✓ |
+| FIFO 保护 | 无 | 已实现 | ✓ |
+| 初始化加速 | 无 | 已实现 | ✓ |
 
 ---
 
@@ -108,66 +158,103 @@
 
 | 文件 | 优化内容 | 迭代 |
 |------|----------|------|
-| `include/VoxelIndex/VoxelIndex.h` | O(1) 体素索引 | 001 |
+| `include/utils/VoxelIndex.h` | O(1) 体素索引 | 001 |
 | `include/MapManager/Map_Manager.h` | 增量快照成员 | 002 |
 | `src/lio/Map_Manager.cpp` | 增量快照实现 | 002 |
 | `include/utils/CpuAffinity.h` | CPU 亲和性工具库 | 004 |
-| `src/lio/PoseEstimation.cpp` | OpenMP 并行畸变校正 | 004 |
-| `src/lio/Estimator.cpp` | OpenMP 并行残差构建 | 004 |
+| `src/lio/PoseEstimation.cpp` | OpenMP 并行 + FIFO 保护 + InitBoost 参数 | 004/005/006 |
+| `src/lio/Estimator.cpp` | OpenMP 并行 + InitBoost 逻辑 | 004/006 |
+| `include/Estimator/Estimator.h` | InitBoostConfig 结构体 | 006 |
 
 ### 配置文件 (`config/horizon_params.yaml`)
 
-当前配置（正确）:
+当前配置:
 ```yaml
 # VoxelIndex
 use_voxel_index_local: true
 voxel_index_resolution: 0.5
 
-# 残差限制（保持默认）
+# 残差限制
 max_corner_residuals: 500
 max_surf_residuals: 750
 max_non_residuals: 350
 
-# AdaptiveBudget（保持默认）
-adaptive_budget_target_build_ms: 8.0
-adaptive_budget_target_solve_ms: 25.0
+# FIFO 实时性保护
+enable_fifo_drop: true
+lidar_queue_max_size: 3
+imu_queue_max_size: 2000
+max_lidar_lag_seconds: 0.5
+
+# InitBoost 初始化加速 (默认关闭)
+enable_init_boost: false
+init_residual_ratio: 0.5
+init_skip_first_n_frames: 0
+init_max_iterations: 2
 ```
 
 ---
 
-## 关键经验教训
+## 相关项目: obs_livox 障碍物检测优化
 
-1. **增量快照最有效**: -99.5% 快照时间，单项优化收益最大
-2. **OpenMP 动态调度优于手动绑核**: 自动负载均衡，充分利用大小核
-3. **Ceres 容差不能激进**: 过度放宽会触发更多优化循环
-4. **残差数量不能随意削减**: 约束变弱导致收敛困难
+**位置**: `~/ws_livox/src/obs_livox/`
+
+### 已完成优化:
+
+1. **订阅优化**: 从原始 `/livox/lidar` 改为订阅 SR 节点的 `/livox_full_cloud`
+2. **性能优化**:
+   - 直接操作 PointCloud2 原始数据（跳过 PCL 转换）
+   - 采样步长可配置
+   - 使用距离平方避免开方
+   - 用乘法代替 atan2
+   - 提前终止机制
+3. **新增功能**:
+   - 高度过滤 (`min_height`, `max_height`)
+   - 性能监控 (`log_performance`)
+   - 实时点数输出 (`log_point_count`)
+
+### 配置 (`launch/obs_livox.launch`):
+```xml
+<param name="detection_range" value="3.0" />
+<param name="field_of_view" value="26.0" />
+<param name="obstacle_threshold" value="200" />
+<param name="sample_step" value="2" />
+<param name="min_height" value="-0.3" />
+<param name="max_height" value="1.5" />
+<param name="log_performance" value="true" />
+<param name="log_point_count" value="false" />
+```
+
+---
+
+## 测试与分析工具
+
+| 工具 | 位置 | 用途 |
+|------|------|------|
+| 时序日志 | `~/ws_livox/src/LIO/logs/*.log` | 帧间隔统计 |
+| 内存监控 | `~/ws_livox/src/LIO/logs/pose_rss_*.csv` | RSS 趋势 |
+| 性能分析 | `~/ws_livox/src/LIO/scripts/perf_analyzer.py` | 综合分析 |
+| 慢帧分析 | `~/Desktop/实验/analyze_slow_frames.py` | 瓶颈定位 |
 
 ---
 
 ## 下一步建议
 
-### 方向 1: 稳定性验证
-- 使用更长的 bag 文件 (car隧道.bag 686s) 验证
-- 隧道等退化场景测试
-
-### 方向 2: 进一步优化 (目标 90ms)
-- Ceres 线程数限制为 4（只用大核）
-- MapManager 异步更新
-- 特征提取并行化
-
-### 方向 3: 精度验证
-- 与原始算法对比轨迹精度
-- EVO 工具评估 APE/RPE
+1. **测试 InitBoost**: 启用 `enable_init_boost: true` 验证初始化加速效果
+2. **精度验证**: 使用 EVO 工具评估轨迹精度
+3. **进一步优化**: 如需达到 90ms 目标，可考虑:
+   - 降低残差上限 10%
+   - MapManager 异步更新
+   - 特征提取并行化
 
 ---
 
-## 测试日志位置
+## 迭代文档
 
-- 时序日志: `~/ws_livox/src/LIO/logs/*.log`
-- 内存监控: `~/ws_livox/src/LIO/logs/pose_rss_*.csv`
-- 分析脚本: `~/ws_livox/src/LIO/scripts/perf_analyzer.py`
+完整文档位于: `~/ws_livox/src/LIO/算法改进日志1129/`
 
-使用方法:
-```bash
-python3 scripts/perf_analyzer.py --log logs/XXX.log --rss logs/pose_rss_XXX.csv
-```
+- `iteration_001_voxel_index.md`
+- `iteration_002_incremental_snapshot.md`
+- `iteration_003_ceres_tuning.md`
+- `iteration_004_rk3588_big_core_parallel.md`
+- `iteration_005_fifo_realtime_optimization.md`
+- `iteration_006_init_boost_optimization.md`

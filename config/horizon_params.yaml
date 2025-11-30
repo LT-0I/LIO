@@ -78,3 +78,15 @@ adaptive_budget_min_non_residuals: 250
 use_voxel_index_local: true
 voxel_index_resolution: 0.5
 
+# FIFO: 实时性优化 - 队列管理与丢帧策略
+#   enable_fifo_drop: 启用 FIFO 丢帧策略，防止延迟累积
+#   lidar_queue_max_size: LiDAR 消息队列最大长度，超过时丢弃最老帧
+#   imu_queue_max_size: IMU 消息队列最大长度
+#   max_lidar_lag_seconds: 最大允许延迟（秒），超过此值的消息直接丢弃
+#   实时性不足时：降低 lidar_queue_max_size 到 2，max_lidar_lag_seconds 到 0.3
+#   若丢帧过多导致轨迹跳跃：增加 lidar_queue_max_size 到 5，max_lidar_lag_seconds 到 1.0
+enable_fifo_drop: true
+lidar_queue_max_size: 3
+imu_queue_max_size: 2000
+max_lidar_lag_seconds: 0.5
+

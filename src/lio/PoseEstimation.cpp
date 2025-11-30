@@ -24,6 +24,14 @@ std::mutex _mutexLidarQueue;
 std::queue<sensor_msgs::PointCloud2ConstPtr> _lidarMsgQueue;
 std::mutex _mutexIMUQueue;
 std::queue<sensor_msgs::ImuConstPtr> _imuMsgQueue;
+
+// FIFO 实时性优化参数
+int lidar_queue_max_size = 3;       // LiDAR 队列最大长度
+int imu_queue_max_size = 2000;      // IMU 队列最大长度
+double max_lidar_lag_seconds = 0.5; // 最大允许延迟 (秒)
+bool enable_fifo_drop = true;       // 启用 FIFO 丢帧策略
+int fifo_dropped_lidar_count = 0;   // 统计：丢弃的 LiDAR 帧数
+int fifo_dropped_imu_count = 0;     // 统计：丢弃的 IMU 消息数
 Eigen::Matrix4d exTlb;
 Eigen::Matrix3d exRlb, exRbl;
 Eigen::Vector3d exPlb, exPbl;
@@ -89,14 +97,53 @@ void pubOdometry(const Eigen::Matrix4d& newPose, double& timefullCloud){
 }
 
 void fullCallBack(const sensor_msgs::PointCloud2ConstPtr &msg){
-  // push lidar msg to queue
-	std::unique_lock<std::mutex> lock(_mutexLidarQueue);
+  // push lidar msg to queue with FIFO overflow protection
+  std::unique_lock<std::mutex> lock(_mutexLidarQueue);
+
+  if(enable_fifo_drop){
+    // 策略1：队列长度限制 - 丢弃最老的帧
+    while(_lidarMsgQueue.size() >= static_cast<size_t>(lidar_queue_max_size)){
+      _lidarMsgQueue.pop();
+      fifo_dropped_lidar_count++;
+      if(log_module_timing){
+        ROS_WARN_THROTTLE(1.0, "[FIFO] LiDAR queue overflow, dropped oldest frame (total dropped: %d)",
+                          fifo_dropped_lidar_count);
+      }
+    }
+
+    // 策略2：延迟检测 - 丢弃过时的消息
+    double msg_time = msg->header.stamp.toSec();
+    double current_time = ros::Time::now().toSec();
+    double lag = current_time - msg_time;
+    if(lag > max_lidar_lag_seconds){
+      fifo_dropped_lidar_count++;
+      if(log_module_timing){
+        ROS_WARN_THROTTLE(1.0, "[FIFO] LiDAR msg too old (lag=%.3fs > %.3fs), dropped (total: %d)",
+                          lag, max_lidar_lag_seconds, fifo_dropped_lidar_count);
+      }
+      return;  // 不入队
+    }
+  }
+
   _lidarMsgQueue.push(msg);
 }
 
 void imu_callback(const sensor_msgs::ImuConstPtr &imu_msg){
-  // push IMU msg to queue
+  // push IMU msg to queue with FIFO overflow protection
   std::unique_lock<std::mutex> lock(_mutexIMUQueue);
+
+  if(enable_fifo_drop){
+    // IMU 队列长度限制 - 丢弃最老的消息
+    while(_imuMsgQueue.size() >= static_cast<size_t>(imu_queue_max_size)){
+      _imuMsgQueue.pop();
+      fifo_dropped_imu_count++;
+    }
+    // IMU 丢帧警告 (低频率输出，避免刷屏)
+    if(fifo_dropped_imu_count > 0 && (fifo_dropped_imu_count % 100 == 0)){
+      ROS_WARN_THROTTLE(5.0, "[FIFO] IMU queue overflow, total dropped: %d", fifo_dropped_imu_count);
+    }
+  }
+
   _imuMsgQueue.push(imu_msg);
 }
 
@@ -712,6 +759,17 @@ int main(int argc, char** argv)
   ros::param::param("~adaptive_budget_min_non_residuals", adaptive_budget_min_non_residuals, adaptive_budget_min_non_residuals);
   ros::param::param("~use_voxel_index_local", use_voxel_index_local, use_voxel_index_local);
   ros::param::param("~voxel_index_resolution", voxel_index_resolution, voxel_index_resolution);
+
+  // FIFO 实时性参数
+  ros::param::param("~enable_fifo_drop", enable_fifo_drop, enable_fifo_drop);
+  ros::param::param("~lidar_queue_max_size", lidar_queue_max_size, lidar_queue_max_size);
+  ros::param::param("~imu_queue_max_size", imu_queue_max_size, imu_queue_max_size);
+  ros::param::param("~max_lidar_lag_seconds", max_lidar_lag_seconds, max_lidar_lag_seconds);
+
+  if(log_module_timing){
+    ROS_INFO("[FIFO] enabled=%d, lidar_queue_max=%d, imu_queue_max=%d, max_lag=%.3fs",
+             enable_fifo_drop, lidar_queue_max_size, imu_queue_max_size, max_lidar_lag_seconds);
+  }
 
   MapManagerConfig map_config;
   map_config.width = map_width;

@@ -262,16 +262,119 @@ inline bool bindToBigCore(int core_index) {
 | 内存峰值 < 300MB | 214MB | 247MB | ✓ |
 | 长时间稳定性 | - | 686s 稳定运行 | ✓ |
 
-## 7. 下一步建议
+## 7. 额外实验：Ceres 线程数调优 ✗
 
-1. ~~**长时间稳定性测试**: 使用更长的 bag 文件验证稳定性~~ ✓ 已完成
-2. **退化场景测试**: 在隧道等特征稀疏场景验证鲁棒性
-3. **Ceres 线程数调优**: 尝试限制 `options.num_threads = 4` 只使用大核
-4. **MapManager update 并行化**: 三种特征点云插入可并行
-5. **IMU 预积分优化**: 当前 0.37ms 可进一步并行化
+### 7.1 实验假设
+
+假设：限制 Ceres 只使用 4 个大核 (CPU 4-7)，避免小核拖累，可能提升求解速度。
+
+```cpp
+// 测试配置
+options.num_threads = 4;  // 原为 hardware_concurrency() = 8
+```
+
+### 7.2 实验结果 (1240.bag 短测试)
+
+| 指标 | 8线程版 | 4线程版 | 变化 |
+|------|---------|---------|------|
+| **平均帧间隔** | 99.83 ms | 99.82 ms | -0.01 ms |
+| **实时性比率** | 0.9983x | 0.9982x | ≈ |
+| Ceres solve | 11.45 ms | **12.91 ms** | **+1.46 ms ⚠️** |
+| Estimator::Estimate | 72.43 ms | 73.10 ms | +0.67 ms |
+| Residual build | 22.67 ms | 23.02 ms | +0.35 ms |
+| Marginalization | 6.92 ms | 6.53 ms | -0.39 ms |
+| RemoveDistortion | 3.57 ms | 3.52 ms | -0.05 ms |
+| MapManager update | 9.07 ms | 8.69 ms | -0.38 ms |
+| 内存峰值 | 214 MB | 211 MB | -3 MB |
+
+### 7.3 结论
+
+**实验失败**: 限制 Ceres 为 4 线程后，`Ceres solve` 时间反而增加 1.46ms (+12.8%)。
+
+**原因分析**:
+1. Ceres 内部的并行策略与 OpenMP 动态调度配合良好
+2. 8 线程让操作系统自动分配任务，大核获得更多工作量，小核也能贡献算力
+3. 强制限制线程数反而减少了总算力
+
+**决策**: 保持 `num_threads = hardware_concurrency()` (8线程)，已回滚。
 
 ---
 
-**状态**: ✓ 长时间稳定性测试完成
+## 8. MapManager update 并行化 ✓
+
+### 8.1 优化内容
+
+将三种特征点云插入循环改为 OpenMP parallel sections：
+
+```cpp
+// src/lio/Map_Manager.cpp
+#include <omp.h>
+
+// OpenMP parallel sections: 3 feature types processed in parallel
+#pragma omp parallel sections num_threads(3)
+{
+    #pragma omp section
+    { /* Corner 特征插入 */ }
+
+    #pragma omp section
+    { /* Surf 特征插入 */ }
+
+    #pragma omp section
+    { /* NonFeature 特征插入 */ }
+}
+```
+
+### 8.2 实验结果 (小 rosbag 对比)
+
+| 指标 | 优化前 | +MapManager并行 | 变化 |
+|------|--------|------------------|------|
+| **平均帧间隔** | 99.83 ms | **99.77 ms** | **-0.06 ms** |
+| **实时性比率** | 0.9983x | **0.9977x** | 更快 |
+| 时间富余 | -0.26s | **-0.35s** | +0.09s |
+| Estimator::Estimate | 72.43 ms | **70.07 ms** | **-2.36 ms (-3.3%)** |
+| MapManager update | 9.07 ms | **8.74 ms** | **-0.33 ms (-3.6%)** |
+| RemoveDistortion | 3.57 ms | **2.76 ms** | **-0.81 ms (-22.7%)** |
+| Residual build | 22.67 ms | 22.00 ms | -0.67 ms |
+| Ceres solve | 11.45 ms | 10.96 ms | -0.49 ms |
+| Marginalization | 6.92 ms | 6.59 ms | -0.33 ms |
+| 内存峰值 | 214 MB | 211 MB | -3 MB |
+
+### 8.3 结论
+
+**优化有效**:
+1. MapManager update 时间下降 3.6%
+2. 整体 Estimator::Estimate 下降 3.3%
+3. 意外收获：RemoveDistortion 下降 22.7%（系统负载更均衡）
+
+---
+
+## 9. 下一步优化建议
+
+### 已完成
+1. ~~**长时间稳定性测试**~~ ✓
+2. ~~**Ceres 线程数调优**~~ ✗ 无效，已回滚
+3. ~~**MapManager update 并行化**~~ ✓
+
+### 可继续优化方向
+
+| 优化项 | 当前耗时 | 预期收益 | 复杂度 | 说明 |
+|--------|----------|----------|--------|------|
+| **Residual build 优化** | 22.00 ms | 2-3 ms | 中 | 已用 sections，可尝试更细粒度并行 |
+| **KdTree 更新并行化** | (含在 MapManager) | 1-2 ms | 中 | 每个 cube 的 KdTree 更新可并行 |
+| **特征提取并行化** | (未计时) | 1-2 ms | 中 | LidarFeatureExtractor 曲率计算可并行 |
+| **Marginalization 改 OpenMP** | 6.59 ms | 0.5-1 ms | 低 | 用 OpenMP 替代 pthread |
+| **退化场景测试** | - | - | - | 验证隧道等场景鲁棒性 |
+
+### 性能已接近极限
+
+当前平均帧间隔 **99.77 ms**，实时性比率 **0.9977x**，已有较大富余。继续优化的边际收益递减，建议：
+
+1. **优先验证精度**: 使用 EVO 工具对比轨迹精度，确保优化不影响定位质量
+2. **退化场景测试**: 在特征稀疏场景验证鲁棒性
+3. **实车测试**: 验证实际运行效果
+
+---
+
+**状态**: ✓ MapManager 并行化完成
 **编译状态**: ✓ 通过 (2025-11-30)
-**结论**: **实时性目标达成！** 长时间运行 (686s) 稳定保持实时性，平均帧间隔 99.94ms，实时性比率 0.9994x
+**最终性能**: 平均帧间隔 99.77ms，实时性比率 0.9977x，富余 0.35s

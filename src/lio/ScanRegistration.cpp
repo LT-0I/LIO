@@ -16,17 +16,24 @@ int Lidar_Type = 0;
 int N_SCANS = 6;
 bool Feature_Mode = false;
 bool Use_seg = false;
+bool log_module_timing = false;
 
 void lidarCallBackHorizon(const livox_ros_driver::CustomMsgConstPtr &msg) {
 
   sensor_msgs::PointCloud2 msg2;
 
+  if(log_module_timing){
+    ROS_INFO("[Timing] FeatureExtract start %.6f", ros::Time::now().toSec());
+  }
   if(Use_seg){
     lidarFeatureExtractor->FeatureExtract_with_segment(msg, laserCloud, laserConerCloud, laserSurfCloud, laserNonFeatureCloud, msg2,N_SCANS);
   }
   else{
     lidarFeatureExtractor->FeatureExtract(msg, laserCloud, laserConerCloud, laserSurfCloud,N_SCANS,Lidar_Type);
-  } 
+  }
+  if(log_module_timing){
+    ROS_INFO("[Timing] FeatureExtract end   %.6f", ros::Time::now().toSec());
+  }
 
   sensor_msgs::PointCloud2 laserCloudMsg;
   pcl::toROSMsg(*laserCloud, laserCloudMsg);
@@ -40,12 +47,18 @@ void lidarCallBackHAP(const livox_ros_driver::CustomMsgConstPtr &msg) {
 
   sensor_msgs::PointCloud2 msg2;
 
+  if(log_module_timing){
+    ROS_INFO("[Timing] FeatureExtract start %.6f", ros::Time::now().toSec());
+  }
   if(Use_seg){
     lidarFeatureExtractor->FeatureExtract_with_segment_hap(msg, laserCloud, laserConerCloud, laserSurfCloud, laserNonFeatureCloud, msg2,N_SCANS);
   }
   else{
     lidarFeatureExtractor->FeatureExtract_hap(msg, laserCloud, laserConerCloud, laserSurfCloud, laserNonFeatureCloud, N_SCANS);
-  } 
+  }
+  if(log_module_timing){
+    ROS_INFO("[Timing] FeatureExtract end   %.6f", ros::Time::now().toSec());
+  }
 
   sensor_msgs::PointCloud2 laserCloudMsg;
   pcl::toROSMsg(*laserCloud, laserCloudMsg);
@@ -82,7 +95,13 @@ void lidarCallBackPc2(const sensor_msgs::PointCloud2ConstPtr &msg) {
         laser_cloud_custom->points.push_back(p_custom);
     }
 
+    if(log_module_timing){
+      ROS_INFO("[Timing] FeatureExtract start %.6f", ros::Time::now().toSec());
+    }
     lidarFeatureExtractor->FeatureExtract_Mid(laser_cloud_custom, laserConerCloud, laserSurfCloud);
+    if(log_module_timing){
+      ROS_INFO("[Timing] FeatureExtract end   %.6f", ros::Time::now().toSec());
+    }
 
     sensor_msgs::PointCloud2 laserCloudMsg;
     pcl::toROSMsg(*laser_cloud_custom, laserCloudMsg);
@@ -122,6 +141,8 @@ int main(int argc, char** argv)
   float LidarNearestDis = static_cast<float>(fsSettings["LidarNearestDis"]);
   float KdTreeCornerOutlierDis = static_cast<float>(fsSettings["KdTreeCornerOutlierDis"]);
 
+  // Read log_module_timing from rosparam (same as PoseEstimation)
+  ros::param::param("~log_module_timing", log_module_timing, log_module_timing);
 
   laserCloud.reset(new pcl::PointCloud<PointType>);
   laserConerCloud.reset(new pcl::PointCloud<PointType>);

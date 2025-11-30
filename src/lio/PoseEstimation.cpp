@@ -1,4 +1,5 @@
 #include "Estimator/Estimator.h"
+#include <omp.h>
 typedef pcl::PointXYZINormal PointType;
 
 int WINDOWSIZE;
@@ -149,22 +150,29 @@ bool fetchImuMsgs(double startTime, double endTime, std::vector<sensor_msgs::Imu
   return !vimuMsg.empty();
 }
 
-/** \brief Remove Lidar Distortion
+/** \brief Remove Lidar Distortion (OpenMP dynamic scheduling for RK3588)
   * \param[in] cloud: lidar cloud need to be undistorted
   * \param[in] dRlc: delta rotation
   * \param[in] dtlc: delta displacement
   */
 void RemoveLidarDistortion(pcl::PointCloud<PointType>::Ptr& cloud,
                            const Eigen::Matrix3d& dRlc, const Eigen::Vector3d& dtlc){
-  int PointsNum = cloud->points.size();
-  for (int i = 0; i < PointsNum; i++) {
-    Eigen::Vector3d startP;
-    float s = cloud->points[i].normal_x;
-    Eigen::Quaterniond qlc = Eigen::Quaterniond(dRlc).normalized();
-    Eigen::Quaterniond delta_qlc = Eigen::Quaterniond::Identity().slerp(s, qlc).normalized();
+  const int PointsNum = cloud->points.size();
+  if (PointsNum == 0) return;
+
+  // Pre-compute constants outside the loop
+  const Eigen::Quaterniond qlc = Eigen::Quaterniond(dRlc).normalized();
+  const Eigen::Matrix3d dRlc_T = dRlc.transpose();
+
+  // OpenMP dynamic scheduling: big cores get more work automatically
+  #pragma omp parallel for schedule(dynamic, 256) num_threads(8)
+  for (int i = 0; i < PointsNum; ++i) {
+    const float s = cloud->points[i].normal_x;
+    const Eigen::Quaterniond delta_qlc = Eigen::Quaterniond::Identity().slerp(s, qlc).normalized();
     const Eigen::Vector3d delta_Plc = s * dtlc;
-    startP = delta_qlc * Eigen::Vector3d(cloud->points[i].x,cloud->points[i].y,cloud->points[i].z) + delta_Plc;
-    Eigen::Vector3d _po = dRlc.transpose() * (startP - dtlc);
+    const Eigen::Vector3d startP = delta_qlc * Eigen::Vector3d(
+        cloud->points[i].x, cloud->points[i].y, cloud->points[i].z) + delta_Plc;
+    const Eigen::Vector3d _po = dRlc_T * (startP - dtlc);
 
     cloud->points[i].x = _po(0);
     cloud->points[i].y = _po(1);

@@ -47,7 +47,7 @@ feature_error_threshold: 0
 #   隧道调试保持 log_module_timing=true 便于定位瓶颈；只有需要实时观察特征数量才暂时启用 log_feature_counts，
 #   否则保留 false 可减少统计开销。
 log_feature_counts: false
-log_module_timing: false
+log_module_timing: true
 
 # CornerAdaptive: 特征保留策略
 #   低纹理场景：corner_adaptive_low_feature_global_kd=60、low_feature_min_keep=220 防止角点耗尽。

@@ -20,6 +20,6 @@
         <rosparam command="load" file="$(find lio_livox)/config/horizon_params.yaml"/>
     </node>
 
-    <node launch-prefix="nice" pkg="rviz" type="rviz" name="rviz" args="-d $(find lio_livox)/rviz_cfg/lio.rviz" />
+    <!--node launch-prefix="nice" pkg="rviz" type="rviz" name="rviz" args="-d $(find lio_livox)/rviz_cfg/lio.rviz" /-->
 
 </launch>

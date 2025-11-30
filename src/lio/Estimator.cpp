@@ -1,4 +1,5 @@
 #include "Estimator/Estimator.h"
+#include <omp.h>
 #include <algorithm>
 #include <cmath>
 #include <memory>
@@ -1087,64 +1088,76 @@ void Estimator::Estimate(std::list<LidarFrame>& lidarFrameList,
       line_feature_stats.resize(windowSize);
     }
 
-    const unsigned int hw_threads = std::max(1u, std::thread::hardware_concurrency());
-    const int worker_count = std::min<int>(windowSize, std::max(1u, hw_threads));
-    const int frames_per_worker = std::max(1, (windowSize + worker_count - 1) / worker_count);
     ros::WallTime residual_build_start = ros::WallTime::now();
     if(log_module_timing_){
       ROS_INFO("[Timing] Residual build start %.6f", ros::Time::now().toSec());
     }
-    auto process_frames = [&](int start, int end){
-      for(int f=start; f<end; ++f) {
-        edgesLine[f].clear();
-        edgesPlan[f].clear();
-        edgesNon[f].clear();
-        auto frame_curr = lidarFrameList.begin();
-        std::advance(frame_curr, f);
-        Eigen::Matrix4d localTransform = Eigen::Matrix4d::Identity();
-        localTransform.topLeftCorner(3,3) = frame_curr->Q * exRbl;
-        localTransform.topRightCorner(3,1) = frame_curr->Q * exPbl + frame_curr->P;
 
-        FeatureBuildStats* stats_ptr = (residual_config_.log_feature_counts && iterOpt == 0 && !line_feature_stats.empty())
-                                         ? &line_feature_stats[f]
-                                         : nullptr;
-        processPointToLine(edgesLine[f],
-                           vLineFeatures[f],
-                           laserCloudCornerStack[f],
-                           laserCloudCornerFromLocal,
-                           kdtreeCornerFromLocal,
-                           exTlb,
-                           localTransform,
-                           stats_ptr);
-
-        processPointToPlanVec(edgesPlan[f],
-                              vPlanFeatures[f],
-                              laserCloudSurfStack[f],
-                              laserCloudSurfFromLocal,
-                              kdtreeSurfFromLocal,
-                              exTlb,
-                              localTransform);
-
-        processNonFeatureICP(edgesNon[f],
-                             vNonFeatures[f],
-                             laserCloudNonFeatureStack[f],
-                             laserCloudNonFeatureFromLocal,
-                             kdtreeNonFeatureFromLocal,
-                             exTlb,
-                             localTransform);
-      }
-    };
-
-    std::vector<std::thread> residual_workers;
-    residual_workers.reserve(worker_count);
-    for(int w=0; w<worker_count; ++w){
-      int start = w * frames_per_worker;
-      if(start >= windowSize) break;
-      int end = std::min(windowSize, start + frames_per_worker);
-      residual_workers.emplace_back(process_frames, start, end);
+    // Clear edge containers
+    for(int f=0; f<windowSize; ++f) {
+      edgesLine[f].clear();
+      edgesPlan[f].clear();
+      edgesNon[f].clear();
     }
-    for(auto& worker : residual_workers){
-      worker.join();
+
+    // Pre-compute transforms for all frames
+    std::vector<Eigen::Matrix4d> localTransforms(windowSize);
+    for(int f=0; f<windowSize; ++f) {
+      auto frame_curr = lidarFrameList.begin();
+      std::advance(frame_curr, f);
+      localTransforms[f] = Eigen::Matrix4d::Identity();
+      localTransforms[f].topLeftCorner(3,3) = frame_curr->Q * exRbl;
+      localTransforms[f].topRightCorner(3,1) = frame_curr->Q * exPbl + frame_curr->P;
+    }
+
+    // OpenMP parallel sections: 3 feature types processed in parallel
+    #pragma omp parallel sections num_threads(3)
+    {
+      #pragma omp section
+      {
+        // Corner features
+        for(int f=0; f<windowSize; ++f) {
+          FeatureBuildStats* stats_ptr = (residual_config_.log_feature_counts && iterOpt == 0 && !line_feature_stats.empty())
+                                           ? &line_feature_stats[f]
+                                           : nullptr;
+          processPointToLine(edgesLine[f],
+                             vLineFeatures[f],
+                             laserCloudCornerStack[f],
+                             laserCloudCornerFromLocal,
+                             kdtreeCornerFromLocal,
+                             exTlb,
+                             localTransforms[f],
+                             stats_ptr);
+        }
+      }
+
+      #pragma omp section
+      {
+        // Surf features
+        for(int f=0; f<windowSize; ++f) {
+          processPointToPlanVec(edgesPlan[f],
+                                vPlanFeatures[f],
+                                laserCloudSurfStack[f],
+                                laserCloudSurfFromLocal,
+                                kdtreeSurfFromLocal,
+                                exTlb,
+                                localTransforms[f]);
+        }
+      }
+
+      #pragma omp section
+      {
+        // Non features
+        for(int f=0; f<windowSize; ++f) {
+          processNonFeatureICP(edgesNon[f],
+                               vNonFeatures[f],
+                               laserCloudNonFeatureStack[f],
+                               laserCloudNonFeatureFromLocal,
+                               kdtreeNonFeatureFromLocal,
+                               exTlb,
+                               localTransforms[f]);
+        }
+      }
     }
     if(log_module_timing_){
       ROS_INFO("[Timing] Residual build end   %.6f", ros::Time::now().toSec());

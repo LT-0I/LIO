@@ -1,55 +1,83 @@
 # 下次会话待办事项
 
-## 紧急: 回滚配置
+## 当前状态: 实时性目标已达成 ✓
 
-当前 `config/horizon_params.yaml` 中的残差配置导致性能下降，需要回滚：
+Iteration 004 通过 OpenMP 动态调度成功实现实时性突破：
+- 平均帧间隔: 99.83 ms (< 100ms ✓)
+- 实时性比率: 0.9983x (< 1.0x ✓)
+- 内存峰值: 214 MB
 
-```yaml
-# 当前（错误）     ->   应恢复为
-max_corner_residuals: 350    ->   500
-max_surf_residuals: 500      ->   750
-max_non_residuals: 250       ->   350
+---
 
-adaptive_budget_target_build_ms: 6.0    ->   8.0
-adaptive_budget_target_solve_ms: 18.0   ->   25.0
-adaptive_budget_tolerance: 0.15         ->   0.25
-adaptive_budget_adjust_ratio: 0.20      ->   0.15
-adaptive_budget_min_corner_residuals: 150   ->   200
-adaptive_budget_min_surf_residuals: 300     ->   450
-adaptive_budget_min_non_residuals: 150      ->   250
+## 下一步可选方向
+
+### 方向 1: 长时间稳定性验证 (推荐)
+
+使用更长的 bag 文件验证算法稳定性：
+
+```bash
+# 使用 car隧道.bag (686s) 测试
+cd ~/ws_livox
+source devel/setup.bash
+roslaunch lio_livox horizon.launch &
+scripts/capture_pose_bt.sh &
+rosbag play ~/Desktop/rosbags/car隧道.bag --clock
+
+# 分析结果
+python3 src/LIO/scripts/perf_analyzer.py --log src/LIO/logs/XXX.log --rss src/LIO/logs/pose_rss_XXX.csv
 ```
 
-## 回滚后预期效果
+### 方向 2: 退化场景测试
 
-恢复到 Iteration 002 的性能水平：
-- 平均帧间隔: ~100.18 ms
-- 实时性比率: ~1.0018x
-- 内存峰值: ~260 MB
+在隧道、长走廊等特征稀疏场景验证鲁棒性：
+- 观察迭代次数是否剧增
+- 检查是否有定位丢失
 
-## 进一步优化方向
+### 方向 3: 进一步优化 (目标 90ms)
 
-### 方向 1: MapManager update 优化 (11.7ms)
-- 分析 update 中的耗时分布
-- 考虑异步更新
+如果需要进一步降低帧处理时间：
 
-### 方向 2: Marginalization 并行化 (8ms)
-- 可以与下一帧的预处理并行
+1. **Ceres 线程数优化**
+   ```cpp
+   // src/lio/Estimator.cpp
+   options.num_threads = 4;  // 只使用大核
+   ```
 
-### 方向 3: 更好的初值估计
-- 减少每帧所需的迭代次数
-- 不是通过减少残差，而是提供更好的初始姿态
+2. **MapManager 异步更新**
+   - 将地图更新移至独立线程
+   - 与下一帧预处理并行
 
-### 方向 4: 条件性优化
-- 在特征丰富区域减少迭代
-- 在特征稀疏区域保持完整迭代
+3. **特征提取并行化**
+   - LidarFeatureExtractor 使用 OpenMP
+
+### 方向 4: 精度验证
+
+使用 EVO 工具评估轨迹精度：
+
+```bash
+# 安装 evo
+pip3 install evo
+
+# 评估 APE (绝对位姿误差)
+evo_ape tum ground_truth.txt estimated.txt -va --plot
+
+# 评估 RPE (相对位姿误差)
+evo_rpe tum ground_truth.txt estimated.txt -va --plot
+```
+
+---
 
 ## 重要文件位置
 
-- 进度记录: `.cursor/optimization_progress.md`
-- 性能基线: `.cursor/performance_baseline.md`
-- 配置文件: `config/horizon_params.yaml`
-- Ceres 参数: `src/lio/Estimator.cpp:1490-1501`
-- 分析脚本: `scripts/perf_analyzer.py`
+| 文件 | 说明 |
+|------|------|
+| `.claude/optimization_progress.md` | 优化进度总览 |
+| `.claude/performance_baseline.md` | 性能基线数据 |
+| `算法改进日志1129/iteration_004_*.md` | 最新迭代详情 |
+| `config/horizon_params.yaml` | 配置文件 |
+| `scripts/perf_analyzer.py` | 性能分析脚本 |
+
+---
 
 ## 快速命令
 
@@ -60,9 +88,20 @@ cd ~/ws_livox && catkin_make -j8
 # 运行测试
 source ~/ws_livox/devel/setup.bash
 roslaunch lio_livox horizon.launch &
-rosbag play ~/car隧道.bag --clock
+rosbag play ~/Desktop/rosbags/XXX.bag --clock
 
 # 分析日志
 cd ~/ws_livox/src/LIO
 python3 scripts/perf_analyzer.py --log logs/XXX.log --rss logs/pose_rss_XXX.csv
 ```
+
+---
+
+## 已完成的优化
+
+| 迭代 | 内容 | 效果 |
+|------|------|------|
+| 001 | VoxelIndex 体素索引 | 111.44ms |
+| 002 | MapManager 增量快照 | 100.18ms |
+| 003 | Ceres 参数调优 | ✗ 失败 |
+| **004** | **OpenMP 动态调度** | **99.83ms ✓** |

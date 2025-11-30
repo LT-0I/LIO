@@ -1075,7 +1075,25 @@ void Estimator::Estimate(std::list<LidarFrame>& lidarFrameList,
   }
 
   // excute optimize process
-  const int max_iters = 5;
+  // InitBoost: 初始化阶段使用更少的迭代次数
+  const bool is_init_phase = (windowSize != SLIDEWINDOWSIZE);
+  const bool init_boost_active = is_init_phase && residual_config_.init_boost.enable;
+  const int max_iters = init_boost_active
+                        ? std::max(1, residual_config_.init_boost.max_iterations)
+                        : 5;
+
+  // InitBoost: 跳过前 N 帧的完整优化（仅做预测）
+  if(init_boost_active &&
+     residual_config_.init_boost.skip_first_n_frames > 0 &&
+     static_cast<int>(frame_count) < residual_config_.init_boost.skip_first_n_frames){
+    if(log_module_timing_){
+      ROS_INFO("[InitBoost] Skipping frame %u (first %d frames)",
+               frame_count, residual_config_.init_boost.skip_first_n_frames);
+    }
+    frame_count++;
+    return;
+  }
+
   for(int iterOpt=0; iterOpt<max_iters; ++iterOpt){
 
     vector2double(lidarFrameList);
@@ -1247,9 +1265,22 @@ void Estimator::Estimate(std::list<LidarFrame>& lidarFrameList,
     }
     adaptiveCornerLimit = std::max(1, adaptiveCornerLimit);
     corner_eigen_ratio_ = eigen_ratio_target;
-    const int maxCornerResidualsPerFrame = adaptiveCornerLimit;
-    const int maxSurfResidualsPerFrame = std::max(1, runtime_surf_limit_);
-    const int maxNonResidualsPerFrame = std::max(1, runtime_non_limit_);
+
+    // InitBoost: 初始化阶段按比例减少残差数量
+    int maxCornerResidualsPerFrame = adaptiveCornerLimit;
+    int maxSurfResidualsPerFrame = std::max(1, runtime_surf_limit_);
+    int maxNonResidualsPerFrame = std::max(1, runtime_non_limit_);
+    if(init_boost_active && residual_config_.init_boost.residual_ratio > 0.0 &&
+       residual_config_.init_boost.residual_ratio < 1.0){
+      const double ratio = residual_config_.init_boost.residual_ratio;
+      maxCornerResidualsPerFrame = std::max(50, static_cast<int>(maxCornerResidualsPerFrame * ratio));
+      maxSurfResidualsPerFrame = std::max(100, static_cast<int>(maxSurfResidualsPerFrame * ratio));
+      maxNonResidualsPerFrame = std::max(50, static_cast<int>(maxNonResidualsPerFrame * ratio));
+      if(log_module_timing_ && iterOpt == 0){
+        ROS_INFO("[InitBoost] Reduced residuals: corner=%d surf=%d non=%d (ratio=%.2f)",
+                 maxCornerResidualsPerFrame, maxSurfResidualsPerFrame, maxNonResidualsPerFrame, ratio);
+      }
+    }
     const double featureErrorThreshold = residual_config_.feature_error_threshold;
     auto shouldKeepFeature = [](int idx, int total, int kept, int limit) -> bool {
       if(limit <= 0 || total <= limit) return true;

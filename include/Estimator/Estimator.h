@@ -44,6 +44,13 @@ struct ResidualBudgetConfig{
 	int min_non_residuals = 250;
 };
 
+struct InitBoostConfig{
+	bool enable = false;                // 启用初始化加速
+	double residual_ratio = 0.5;        // 初始化阶段残差数量比例 (0.3~0.7)
+	int skip_first_n_frames = 0;        // 跳过前 N 帧的完整优化
+	int max_iterations = 2;             // 初始化阶段最大迭代次数 (正常为 4)
+};
+
 struct EstimatorResidualConfig{
 	int max_corner_residuals = 500;
 	int max_surf_residuals = 750;
@@ -52,6 +59,7 @@ struct EstimatorResidualConfig{
 	bool log_feature_counts = false;
 	CornerAdaptiveConfig adaptive_corner;
 	ResidualBudgetConfig adaptive_budget;
+	InitBoostConfig init_boost;
 };
 
 class Estimator{

@@ -719,6 +719,11 @@ int main(int argc, char** argv)
   int adaptive_budget_min_non_residuals = 250;
   bool use_voxel_index_local = true;
   float voxel_index_resolution = 0.5f;
+  // InitBoost: 初始化阶段加速参数
+  bool enable_init_boost = false;
+  double init_residual_ratio = 0.5;
+  int init_skip_first_n_frames = 0;
+  int init_max_iterations = 2;
   ros::param::param("~map_width", map_width, map_width);
   ros::param::param("~map_height", map_height, map_height);
   ros::param::param("~map_depth", map_depth, map_depth);
@@ -759,6 +764,12 @@ int main(int argc, char** argv)
   ros::param::param("~adaptive_budget_min_non_residuals", adaptive_budget_min_non_residuals, adaptive_budget_min_non_residuals);
   ros::param::param("~use_voxel_index_local", use_voxel_index_local, use_voxel_index_local);
   ros::param::param("~voxel_index_resolution", voxel_index_resolution, voxel_index_resolution);
+
+  // InitBoost 参数
+  ros::param::param("~enable_init_boost", enable_init_boost, enable_init_boost);
+  ros::param::param("~init_residual_ratio", init_residual_ratio, init_residual_ratio);
+  ros::param::param("~init_skip_first_n_frames", init_skip_first_n_frames, init_skip_first_n_frames);
+  ros::param::param("~init_max_iterations", init_max_iterations, init_max_iterations);
 
   // FIFO 实时性参数
   ros::param::param("~enable_fifo_drop", enable_fifo_drop, enable_fifo_drop);
@@ -813,6 +824,11 @@ int main(int argc, char** argv)
   residual_config.adaptive_budget.min_corner_residuals = adaptive_budget_min_corner_residuals;
   residual_config.adaptive_budget.min_surf_residuals = adaptive_budget_min_surf_residuals;
   residual_config.adaptive_budget.min_non_residuals = adaptive_budget_min_non_residuals;
+  // InitBoost 配置
+  residual_config.init_boost.enable = enable_init_boost;
+  residual_config.init_boost.residual_ratio = init_residual_ratio;
+  residual_config.init_boost.skip_first_n_frames = init_skip_first_n_frames;
+  residual_config.init_boost.max_iterations = init_max_iterations;
 
   laserCloudFullRes.reset(new pcl::PointCloud<PointType>);
   estimator = new Estimator(filter_parameter_corner, filter_parameter_surf, map_config, residual_config, log_module_timing);

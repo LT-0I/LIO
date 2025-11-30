@@ -90,3 +90,16 @@ lidar_queue_max_size: 3
 imu_queue_max_size: 2000
 max_lidar_lag_seconds: 0.5
 
+# InitBoost: 初始化阶段加速优化
+#   初始化阶段 (LidarIMUInited=false) 平均耗时是稳定期的 2 倍，主要因为：
+#   1. 首帧 Residual build 需构建完整 KD-tree
+#   2. 地图初始化开销较大
+#   enable_init_boost: 启用初始化加速
+#   init_residual_ratio: 初始化阶段残差数量比例 (0.3~0.7)，越小越快但精度略降
+#   init_skip_first_n_frames: 跳过前 N 帧的完整优化 (仅做预测)，0=不跳过
+#   init_max_iterations: 初始化阶段最大迭代次数 (正常为 4)
+enable_init_boost: true
+init_residual_ratio: 0.5
+init_skip_first_n_frames: 0
+init_max_iterations: 2
+

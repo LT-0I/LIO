@@ -232,17 +232,17 @@ void MAP_MANAGER::MapIncrement(const pcl::PointCloud<PointType>::Ptr& laserCloud
   const int write_idx = staging_idx;
   snapshot_cv.wait(locker2, [this, write_idx](){ return snapshot_ref_count[write_idx].load() == 0; });
 
-  // Snapshot copy strategy: full copy on first frame, incremental thereafter
-  if(!snapshot_initialized_){
-    // First frame: full copy to both buffers
-    FullSnapshotCopy(0);
-    FullSnapshotCopy(1);
-    snapshot_initialized_ = true;
-  } else if(!dirty_cube_indices_.empty()){
-    // Subsequent frames: only copy dirty cubes from previous frame
-    IncrementalSnapshotCopy(write_idx, dirty_cube_indices_);
+  // 恢复到稳定版本的完整快照拷贝逻辑
+  // 稳定版本 (commit 5e0281584f3ac8eaaacc3f8d55c8b5667e0a302d) 每帧都做完整拷贝
+  // IncrementalSnapshotCopy 可能导致旧 cube 数据不一致
+  for(int i = 0; i < laserCloudNum; i++){
+    CornerKdMap_last[write_idx][i] = *laserCloudCornerKdMap[i];
+    SurfKdMap_last[write_idx][i] = *laserCloudSurfKdMap[i];
+    NonFeatureKdMap_last[write_idx][i] = *laserCloudNonFeatureKdMap[i];
+    laserCloudSurf_for_match[write_idx][i] = *laserCloudSurfArray[i];
+    laserCloudCorner_for_match[write_idx][i] = *laserCloudCornerArray[i];
+    laserCloudNonFeature_for_match[write_idx][i] = *laserCloudNonFeatureArray[i];
   }
-  dirty_cube_indices_.clear();
 
   laserCloudCenWidth_last_buf[write_idx] = laserCloudCenWidth;
   laserCloudCenHeight_last_buf[write_idx] = laserCloudCenHeight;
@@ -262,83 +262,73 @@ void MAP_MANAGER::MapIncrement(const pcl::PointCloud<PointType>::Ptr& laserCloud
   PruneFarCubes();
 
   t2 = clock();
-  const int laserCloudCornerStackNum = laserCloudCornerStack->points.size();
-  const int laserCloudSurfStackNum = laserCloudSurfStack->points.size();
-  const int laserCloudNonFeatureStackNum = laserCloudNonFeatureStack->points.size();
+  // 恢复到稳定版本的顺序执行逻辑
+  // 稳定版本 (commit 5e0281584f3ac8eaaacc3f8d55c8b5667e0a302d) 不使用 OpenMP 并行
+  // 避免多线程 push_back 到同一个 cube 时的潜在数据竞争
+  int laserCloudCornerStackNum = laserCloudCornerStack->points.size();
+  int laserCloudSurfStackNum = laserCloudSurfStack->points.size();
+  int laserCloudNonFeatureStackNum = laserCloudNonFeatureStack->points.size();
   std::vector<uint8_t> CornerChangeFlag(laserCloudNum, 0);
   std::vector<uint8_t> SurfChangeFlag(laserCloudNum, 0);
   std::vector<uint8_t> NonFeatureChangeFlag(laserCloudNum, 0);
+  PointType pointSel;
+  for (int i = 0; i < laserCloudCornerStackNum; i++) {
 
-  // OpenMP parallel sections: 3 feature types processed in parallel
-  #pragma omp parallel sections num_threads(3)
-  {
-    #pragma omp section
-    {
-      // Corner features insertion
-      for (int i = 0; i < laserCloudCornerStackNum; i++) {
-        const PointType& pointSel = laserCloudCornerStack->points[i];
-        int cubeI = int((pointSel.x + 25.0) / 50.0) + laserCloudCenDepth;
-        int cubeJ = int((pointSel.y + 25.0) / 50.0) + laserCloudCenWidth;
-        int cubeK = int((pointSel.z + 25.0) / 50.0) + laserCloudCenHeight;
+    pointSel = laserCloudCornerStack->points[i];
 
-        if (pointSel.x + 25.0 < 0) cubeI--;
-        if (pointSel.y + 25.0 < 0) cubeJ--;
-        if (pointSel.z + 25.0 < 0) cubeK--;
+    int cubeI = int((pointSel.x + 25.0) / 50.0) + laserCloudCenDepth;
+    int cubeJ = int((pointSel.y + 25.0) / 50.0) + laserCloudCenWidth;
+    int cubeK = int((pointSel.z + 25.0) / 50.0) + laserCloudCenHeight;
 
-        if (cubeI >= 0 && cubeI < laserCloudDepth &&
-            cubeJ >= 0 && cubeJ < laserCloudWidth &&
-            cubeK >= 0 && cubeK < laserCloudHeight) {
-          size_t cubeInd = ToIndex(cubeI, cubeJ, cubeK);
-          laserCloudCornerArray[cubeInd]->push_back(pointSel);
-          CornerChangeFlag[cubeInd] = 1;
-        }
-      }
+    if (pointSel.x + 25.0 < 0) cubeI--;
+    if (pointSel.y + 25.0 < 0) cubeJ--;
+    if (pointSel.z + 25.0 < 0) cubeK--;
+
+    if (cubeI >= 0 && cubeI < laserCloudDepth &&
+        cubeJ >= 0 && cubeJ < laserCloudWidth &&
+        cubeK >= 0 &&
+        cubeK < laserCloudHeight) {
+      size_t cubeInd = ToIndex(cubeI, cubeJ, cubeK);
+      laserCloudCornerArray[cubeInd]->push_back(pointSel);
+      CornerChangeFlag[cubeInd] = 1;
     }
+  }
 
-    #pragma omp section
-    {
-      // Surf features insertion
-      for (int i = 0; i < laserCloudSurfStackNum; i++) {
-        const PointType& pointSel = laserCloudSurfStack->points[i];
-        int cubeI = int((pointSel.x + 25.0) / 50.0) + laserCloudCenDepth;
-        int cubeJ = int((pointSel.y + 25.0) / 50.0) + laserCloudCenWidth;
-        int cubeK = int((pointSel.z + 25.0) / 50.0) + laserCloudCenHeight;
+  for (int i = 0; i < laserCloudSurfStackNum; i++) {
+    pointSel = laserCloudSurfStack->points[i];
+    int cubeI = int((pointSel.x + 25.0) / 50.0) + laserCloudCenDepth;
+    int cubeJ = int((pointSel.y + 25.0) / 50.0) + laserCloudCenWidth;
+    int cubeK = int((pointSel.z + 25.0) / 50.0) + laserCloudCenHeight;
 
-        if (pointSel.x + 25.0 < 0) cubeI--;
-        if (pointSel.y + 25.0 < 0) cubeJ--;
-        if (pointSel.z + 25.0 < 0) cubeK--;
+    if (pointSel.x + 25.0 < 0) cubeI--;
+    if (pointSel.y + 25.0 < 0) cubeJ--;
+    if (pointSel.z + 25.0 < 0) cubeK--;
 
-        if (cubeI >= 0 && cubeI < laserCloudDepth &&
-            cubeJ >= 0 && cubeJ < laserCloudWidth &&
-            cubeK >= 0 && cubeK < laserCloudHeight) {
-          size_t cubeInd = ToIndex(cubeI, cubeJ, cubeK);
-          laserCloudSurfArray[cubeInd]->push_back(pointSel);
-          SurfChangeFlag[cubeInd] = 1;
-        }
-      }
+    if (cubeI >= 0 && cubeI < laserCloudDepth &&
+        cubeJ >= 0 && cubeJ < laserCloudWidth &&
+        cubeK >= 0 && cubeK < laserCloudHeight) {
+      size_t cubeInd = ToIndex(cubeI, cubeJ, cubeK);
+      laserCloudSurfArray[cubeInd]->push_back(pointSel);
+      SurfChangeFlag[cubeInd] = 1;
     }
+  }
 
-    #pragma omp section
-    {
-      // Non features insertion
-      for (int i = 0; i < laserCloudNonFeatureStackNum; i++) {
-        const PointType& pointSel = laserCloudNonFeatureStack->points[i];
-        int cubeI = int((pointSel.x + 25.0) / 50.0) + laserCloudCenDepth;
-        int cubeJ = int((pointSel.y + 25.0) / 50.0) + laserCloudCenWidth;
-        int cubeK = int((pointSel.z + 25.0) / 50.0) + laserCloudCenHeight;
+  for (int i = 0; i < laserCloudNonFeatureStackNum; i++) {
+    pointSel = laserCloudNonFeatureStack->points[i];
+    int cubeI = int((pointSel.x + 25.0) / 50.0) + laserCloudCenDepth;
+    int cubeJ = int((pointSel.y + 25.0) / 50.0) + laserCloudCenWidth;
+    int cubeK = int((pointSel.z + 25.0) / 50.0) + laserCloudCenHeight;
 
-        if (pointSel.x + 25.0 < 0) cubeI--;
-        if (pointSel.y + 25.0 < 0) cubeJ--;
-        if (pointSel.z + 25.0 < 0) cubeK--;
+    if (pointSel.x + 25.0 < 0) cubeI--;
+    if (pointSel.y + 25.0 < 0) cubeJ--;
+    if (pointSel.z + 25.0 < 0) cubeK--;
 
-        if (cubeI >= 0 && cubeI < laserCloudDepth &&
-            cubeJ >= 0 && cubeJ < laserCloudWidth &&
-            cubeK >= 0 && cubeK < laserCloudHeight) {
-          size_t cubeInd = ToIndex(cubeI, cubeJ, cubeK);
-          laserCloudNonFeatureArray[cubeInd]->push_back(pointSel);
-          NonFeatureChangeFlag[cubeInd] = 1;
-        }
-      }
+    if (cubeI >= 0 && cubeI < laserCloudDepth &&
+        cubeJ >= 0 && cubeJ < laserCloudWidth &&
+        cubeK >= 0 && cubeK < laserCloudHeight) {
+      size_t cubeInd = ToIndex(cubeI, cubeJ, cubeK);
+      laserCloudNonFeatureArray[cubeInd]->push_back(pointSel);
+      NonFeatureChangeFlag[cubeInd] = 1;
     }
   }
 
@@ -393,17 +383,8 @@ void MAP_MANAGER::MapIncrement(const pcl::PointCloud<PointType>::Ptr& laserCloud
   }
 
   t4 = clock();
-
-  // Collect dirty cube indices for incremental snapshot in next frame
-  // This replaces O(4851) full copy with O(dirty_count) partial copy
-  dirty_cube_indices_.clear();
-  dirty_cube_indices_.reserve(100);  // Typical frame touches ~10-50 cubes
-  for(int i = 0; i < laserCloudNum; i++){
-    if(CornerChangeFlag[i] || SurfChangeFlag[i] || NonFeatureChangeFlag[i]){
-      dirty_cube_indices_.push_back(static_cast<size_t>(i));
-    }
-  }
-
+  // 恢复到稳定版本: 移除 dirty_cube_indices 收集代码
+  // 稳定版本不使用增量快照优化
   t5 = clock();
 
   currentUpdatePos ++;

@@ -46,17 +46,18 @@ feature_error_threshold: 0
 # Diagnostics: 日志与统计控制
 #   隧道调试保持 log_module_timing=true 便于定位瓶颈；只有需要实时观察特征数量才暂时启用 log_feature_counts，
 #   否则保留 false 可减少统计开销。
-log_feature_counts: false
+log_feature_counts: true
 log_module_timing: true
 
 # CornerAdaptive: 特征保留策略
 #   低纹理场景：corner_adaptive_low_feature_global_kd=60、low_feature_min_keep=220 防止角点耗尽。
 #   若局部漂移，corner_adaptive_high_feature_max_keep 可升至 450~480，default_eigen_ratio 调小到 2.8 可更宽松收角点。
+#   隧道优化 (iteration_005): 放宽 eigen_ratio 接受更多隧道壁角点，降低 low_feature 触发阈值
 corner_adaptive_enable: true
-corner_adaptive_default_eigen_ratio: 3.0
-corner_adaptive_low_feature_eigen_ratio: 2.5
-corner_adaptive_low_feature_global_kd: 80
-corner_adaptive_low_feature_min_keep: 200
+corner_adaptive_default_eigen_ratio: 2.5
+corner_adaptive_low_feature_eigen_ratio: 2.0
+corner_adaptive_low_feature_global_kd: 50
+corner_adaptive_low_feature_min_keep: 250
 corner_adaptive_high_feature_global_kd: 800
 corner_adaptive_high_feature_max_keep: 400
 
@@ -75,6 +76,6 @@ adaptive_budget_min_non_residuals: 250
 # VoxelIndex: O(1) local map search optimization (space-time tradeoff)
 #   use_voxel_index_local: 启用体素索引替代局部 KD-Tree 查询
 #   voxel_index_resolution: 体素分辨率（米），较小值更精确但内存开销更大
-use_voxel_index_local: true
+use_voxel_index_local: false
 voxel_index_resolution: 0.5
 

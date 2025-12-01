@@ -282,14 +282,8 @@ void Estimator::processPointToLine(std::vector<std::unique_ptr<ceres::CostFuncti
     }
 
     if(laserCloudCornerLocal->points.size() > 20 ){
-      int local_found = 0;
-      if (use_voxel_index_local_ && !voxelCornerLocal_.empty()) {
-        local_found = voxelCornerLocal_.radiusSearch(_pointSel, std::sqrt(thres_dist), _pointSearchInd2, _pointSearchSqDis2, 5);
-      } else {
-        kdtreeLocal->nearestKSearch(_pointSel, 5, _pointSearchInd2, _pointSearchSqDis2);
-        local_found = (_pointSearchSqDis2.size() >= 5 && _pointSearchSqDis2[4] < thres_dist) ? 5 : 0;
-      }
-      if (local_found >= 5 && _pointSearchSqDis2[4] < thres_dist) {
+      kdtreeLocal->nearestKSearch(_pointSel, 5, _pointSearchInd2, _pointSearchSqDis2);
+      if (_pointSearchSqDis2[4] < thres_dist) {
         if(stats) stats->local_kd_success++;
 
         debug_num2 ++;
@@ -486,14 +480,8 @@ void Estimator::processPointToPlan(std::vector<std::unique_ptr<ceres::CostFuncti
       }
     }
     if(laserCloudSurfLocal->points.size() > 20 ){
-    int local_found = 0;
-    if (use_voxel_index_local_ && !voxelSurfLocal_.empty()) {
-      local_found = voxelSurfLocal_.radiusSearch(_pointSel, 1.0f, _pointSearchInd2, _pointSearchSqDis2, 5);
-    } else {
-      kdtreeLocal->nearestKSearch(_pointSel, 5, _pointSearchInd2, _pointSearchSqDis2);
-      local_found = (_pointSearchSqDis2.size() >= 5 && _pointSearchSqDis2[4] < 1.0) ? 5 : 0;
-    }
-    if (local_found >= 5 && _pointSearchSqDis2[4] < 1.0) {
+    kdtreeLocal->nearestKSearch(_pointSel, 5, _pointSearchInd2, _pointSearchSqDis2);
+    if (_pointSearchSqDis2[4] < 1.0) {
       debug_num2++;
       for (int j = 0; j < 5; j++) {
         _matA0(j, 0) = laserCloudSurfLocal->points[_pointSearchInd2[j]].x;
@@ -665,14 +653,8 @@ void Estimator::processPointToPlanVec(std::vector<std::unique_ptr<ceres::CostFun
 
 
     if(laserCloudSurfLocal->points.size() > 20 ){
-    int local_found = 0;
-    if (use_voxel_index_local_ && !voxelSurfLocal_.empty()) {
-      local_found = voxelSurfLocal_.radiusSearch(_pointSel, std::sqrt(thres_dist), _pointSearchInd2, _pointSearchSqDis2, 5);
-    } else {
-      kdtreeLocal->nearestKSearch(_pointSel, 5, _pointSearchInd2, _pointSearchSqDis2);
-      local_found = (_pointSearchSqDis2.size() >= 5 && _pointSearchSqDis2[4] < thres_dist) ? 5 : 0;
-    }
-    if (local_found >= 5 && _pointSearchSqDis2[4] < thres_dist) {
+    kdtreeLocal->nearestKSearch(_pointSel, 5, _pointSearchInd2, _pointSearchSqDis2);
+    if (_pointSearchSqDis2[4] < thres_dist) {
       debug_num2++;
       for (int j = 0; j < 5; j++) {
         _matA0(j, 0) = laserCloudSurfLocal->points[_pointSearchInd2[j]].x;
@@ -838,14 +820,8 @@ void Estimator::processNonFeatureICP(std::vector<std::unique_ptr<ceres::CostFunc
     }
 
     if(laserCloudNonFeatureLocal->points.size() > 20 ){
-      int local_found = 0;
-      if (use_voxel_index_local_ && !voxelNonLocal_.empty()) {
-        local_found = voxelNonLocal_.radiusSearch(_pointSel, std::sqrt(thres_dist), _pointSearchInd2, _pointSearchSqDis2, 5);
-      } else {
-        kdtreeLocal->nearestKSearch(_pointSel, 5, _pointSearchInd2, _pointSearchSqDis2);
-        local_found = (_pointSearchSqDis2.size() >= 5 && _pointSearchSqDis2[4] < thres_dist) ? 5 : 0;
-      }
-      if (local_found >= 5 && _pointSearchSqDis2[4] < thres_dist) {
+      kdtreeLocal->nearestKSearch(_pointSel, 5, _pointSearchInd2, _pointSearchSqDis2);
+      if (_pointSearchSqDis2[4] < thres_dist) {
         for (int j = 0; j < 5; j++) {
           _matA0(j, 0) = laserCloudNonFeatureLocal->points[_pointSearchInd2[j]].x;
           _matA0(j, 1) = laserCloudNonFeatureLocal->points[_pointSearchInd2[j]].y;
@@ -1066,6 +1042,8 @@ void Estimator::Estimate(std::list<LidarFrame>& lidarFrameList,
     v.reserve(2000);
   }
 
+  // 恢复到稳定版本的固定值
+  // 稳定版本不使用动态 thres_dist 和 plan_weight_tan
   if(windowSize == SLIDEWINDOWSIZE) {
     plan_weight_tan = 0.0003;
     thres_dist = 1.0;
@@ -1088,76 +1066,67 @@ void Estimator::Estimate(std::list<LidarFrame>& lidarFrameList,
       line_feature_stats.resize(windowSize);
     }
 
+    // 恢复到稳定版本的并行策略: 按帧并行，而不是按特征类型并行
+    // 稳定版本使用 std::thread 按帧分配工作，每个worker处理一个帧的所有特征类型
+    // 新版本使用 OpenMP parallel sections 按特征类型并行，可能导致共享KD-Tree的竞争问题
+    const unsigned int hw_threads = std::max(1u, std::thread::hardware_concurrency());
+    const int worker_count = std::min<int>(windowSize, std::max(1u, hw_threads));
+    const int frames_per_worker = std::max(1, (windowSize + worker_count - 1) / worker_count);
     ros::WallTime residual_build_start = ros::WallTime::now();
     if(log_module_timing_){
       ROS_INFO("[Timing] Residual build start %.6f", ros::Time::now().toSec());
     }
+    auto process_frames = [&](int start, int end){
+      for(int f=start; f<end; ++f) {
+        edgesLine[f].clear();
+        edgesPlan[f].clear();
+        edgesNon[f].clear();
+        auto frame_curr = lidarFrameList.begin();
+        std::advance(frame_curr, f);
+        Eigen::Matrix4d localTransform = Eigen::Matrix4d::Identity();
+        localTransform.topLeftCorner(3,3) = frame_curr->Q * exRbl;
+        localTransform.topRightCorner(3,1) = frame_curr->Q * exPbl + frame_curr->P;
 
-    // Clear edge containers
-    for(int f=0; f<windowSize; ++f) {
-      edgesLine[f].clear();
-      edgesPlan[f].clear();
-      edgesNon[f].clear();
-    }
+        FeatureBuildStats* stats_ptr = (residual_config_.log_feature_counts && iterOpt == 0 && !line_feature_stats.empty())
+                                         ? &line_feature_stats[f]
+                                         : nullptr;
+        processPointToLine(edgesLine[f],
+                           vLineFeatures[f],
+                           laserCloudCornerStack[f],
+                           laserCloudCornerFromLocal,
+                           kdtreeCornerFromLocal,
+                           exTlb,
+                           localTransform,
+                           stats_ptr);
 
-    // Pre-compute transforms for all frames
-    std::vector<Eigen::Matrix4d> localTransforms(windowSize);
-    for(int f=0; f<windowSize; ++f) {
-      auto frame_curr = lidarFrameList.begin();
-      std::advance(frame_curr, f);
-      localTransforms[f] = Eigen::Matrix4d::Identity();
-      localTransforms[f].topLeftCorner(3,3) = frame_curr->Q * exRbl;
-      localTransforms[f].topRightCorner(3,1) = frame_curr->Q * exPbl + frame_curr->P;
-    }
+        processPointToPlanVec(edgesPlan[f],
+                              vPlanFeatures[f],
+                              laserCloudSurfStack[f],
+                              laserCloudSurfFromLocal,
+                              kdtreeSurfFromLocal,
+                              exTlb,
+                              localTransform);
 
-    // OpenMP parallel sections: 3 feature types processed in parallel
-    #pragma omp parallel sections num_threads(3)
-    {
-      #pragma omp section
-      {
-        // Corner features
-        for(int f=0; f<windowSize; ++f) {
-          FeatureBuildStats* stats_ptr = (residual_config_.log_feature_counts && iterOpt == 0 && !line_feature_stats.empty())
-                                           ? &line_feature_stats[f]
-                                           : nullptr;
-          processPointToLine(edgesLine[f],
-                             vLineFeatures[f],
-                             laserCloudCornerStack[f],
-                             laserCloudCornerFromLocal,
-                             kdtreeCornerFromLocal,
+        processNonFeatureICP(edgesNon[f],
+                             vNonFeatures[f],
+                             laserCloudNonFeatureStack[f],
+                             laserCloudNonFeatureFromLocal,
+                             kdtreeNonFeatureFromLocal,
                              exTlb,
-                             localTransforms[f],
-                             stats_ptr);
-        }
+                             localTransform);
       }
+    };
 
-      #pragma omp section
-      {
-        // Surf features
-        for(int f=0; f<windowSize; ++f) {
-          processPointToPlanVec(edgesPlan[f],
-                                vPlanFeatures[f],
-                                laserCloudSurfStack[f],
-                                laserCloudSurfFromLocal,
-                                kdtreeSurfFromLocal,
-                                exTlb,
-                                localTransforms[f]);
-        }
-      }
-
-      #pragma omp section
-      {
-        // Non features
-        for(int f=0; f<windowSize; ++f) {
-          processNonFeatureICP(edgesNon[f],
-                               vNonFeatures[f],
-                               laserCloudNonFeatureStack[f],
-                               laserCloudNonFeatureFromLocal,
-                               kdtreeNonFeatureFromLocal,
-                               exTlb,
-                               localTransforms[f]);
-        }
-      }
+    std::vector<std::thread> residual_workers;
+    residual_workers.reserve(worker_count);
+    for(int w=0; w<worker_count; ++w){
+      int start = w * frames_per_worker;
+      if(start >= windowSize) break;
+      int end = std::min(windowSize, start + frames_per_worker);
+      residual_workers.emplace_back(process_frames, start, end);
+    }
+    for(auto& worker : residual_workers){
+      worker.join();
     }
     if(log_module_timing_){
       ROS_INFO("[Timing] Residual build end   %.6f", ros::Time::now().toSec());
@@ -1176,7 +1145,16 @@ void Estimator::Estimate(std::list<LidarFrame>& lidarFrameList,
       }
       avg_global_kd = static_cast<double>(total_global_kd) / static_cast<double>(line_feature_stats.size());
     }
+    // 更新历史全局KD值，用于下一帧的动态搜索半径计算
+    if(iterOpt == 0 && windowSize == SLIDEWINDOWSIZE){
+      last_avg_global_kd_ = avg_global_kd;
+    }
 
+    // Loss Function: 恢复到稳定版本的逻辑
+    // 稳定版本 (commit 5e0281584f3ac8eaaacc3f8d55c8b5667e0a302d) 中:
+    // - 初始化阶段 (windowSize != SLIDEWINDOWSIZE): 使用 Huber Loss
+    // - 正常运行阶段 (windowSize == SLIDEWINDOWSIZE): loss_function = nullptr
+    // 使用 nullptr 意味着完整的 LiDAR 约束权重，不降权
     ceres::LossFunction* loss_function = nullptr;
     if(windowSize != SLIDEWINDOWSIZE){
       loss_function = new ceres::HuberLoss(0.1 / IMUIntegrator::lidar_m);
@@ -1247,6 +1225,9 @@ void Estimator::Estimate(std::list<LidarFrame>& lidarFrameList,
     }
     adaptiveCornerLimit = std::max(1, adaptiveCornerLimit);
     corner_eigen_ratio_ = eigen_ratio_target;
+
+    // 残差数量限制: 恢复到稳定版本的逻辑
+    // 不再使用退化模式激进削减残差，让 LiDAR 约束保持完整
     const int maxCornerResidualsPerFrame = adaptiveCornerLimit;
     const int maxSurfResidualsPerFrame = std::max(1, runtime_surf_limit_);
     const int maxNonResidualsPerFrame = std::max(1, runtime_non_limit_);
@@ -1536,10 +1517,16 @@ void Estimator::Estimate(std::list<LidarFrame>& lidarFrameList,
     Eigen::Vector3d V_after_opti = lidarFrameList.back().V;
     double deltaR = (q_before_opti.angularDistance(q_after_opti)) * 180.0 / M_PI;
     double deltaT = (t_before_opti - t_after_opti).norm();
+    double speed = V_after_opti.norm();
 
     if (deltaR < 0.05 && deltaT < 0.05 || (iterOpt+1) == max_iters){
       if(log_module_timing_){
         ROS_INFO("[Timing] Marginalization start %.6f", ros::Time::now().toSec());
+      }
+      // 诊断日志: 位姿变化、速度、迭代次数
+      if(residual_config_.log_feature_counts && windowSize == SLIDEWINDOWSIZE){
+        ROS_INFO("Estimator pose_delta: deltaR=%.4f deg deltaT=%.4f m speed=%.2f m/s iters=%d",
+                 deltaR, deltaT, speed, iterOpt + 1);
       }
       ROS_INFO("Frame: %u", frame_count++);
       if(windowSize != SLIDEWINDOWSIZE) break;
@@ -1818,12 +1805,5 @@ void Estimator::MapIncrementLocal(const pcl::PointCloud<PointType>::Ptr& laserCl
   EnforceLocalMapLimit(laserCloudCornerFromLocal, local_corner_max_points_);
   EnforceLocalMapLimit(laserCloudSurfFromLocal, local_surf_max_points_);
   EnforceLocalMapLimit(laserCloudNonFeatureFromLocal, local_non_max_points_);
-
-  // Build VoxelIndex for O(1) local map search (space-time tradeoff)
-  if (use_voxel_index_local_) {
-    voxelCornerLocal_.buildIndex(laserCloudCornerFromLocal);
-    voxelSurfLocal_.buildIndex(laserCloudSurfFromLocal);
-    voxelNonLocal_.buildIndex(laserCloudNonFeatureFromLocal);
-  }
   localMapID ++;
 }

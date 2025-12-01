@@ -360,6 +360,12 @@ private:
 	int local_surf_max_points_ = 0;
 	int local_non_max_points_ = 0;
 
+	// 动态搜索半径 (隧道场景优化)
+	double last_avg_global_kd_ = 100.0;  // 上一帧的平均全局KD匹配数
+	double dynamic_thres_dist_ = 1.0;    // 动态调整的搜索半径
+	double last_speed_ = 10.0;           // 上一帧的速度估计 (m/s)
+	int consecutive_low_speed_frames_ = 0; // 连续低速帧计数
+
 	void UpdateResidualLimits(double build_ms, double solve_ms);
 	void EnforceLocalMapLimit(pcl::PointCloud<PointType>::Ptr& cloud, int max_points);
 };

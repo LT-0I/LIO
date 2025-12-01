@@ -7,7 +7,7 @@ Panels:
         - /odometry1
         - /mapping1/PointCloud21
       Splitter Ratio: 0.5225988626480103
-    Tree Height: 360
+    Tree Height: 362
   - Class: rviz/Selection
     Name: Selection
   - Class: rviz/Tool Properties
@@ -172,7 +172,7 @@ Visualization Manager:
   Views:
     Current:
       Class: rviz/Orbit
-      Distance: 30.738948822021484
+      Distance: 36.397727966308594
       Enable Stereo Rendering:
         Stereo Eye Separation: 0.05999999865889549
         Stereo Focal Distance: 1
@@ -180,9 +180,9 @@ Visualization Manager:
         Value: false
       Field of View: 0.7853981852531433
       Focal Point:
-        X: -0.5546823740005493
-        Y: 3.7811899185180664
-        Z: 7.867835998535156
+        X: -0.6381739974021912
+        Y: 3.2936360836029053
+        Z: 7.815441131591797
       Focal Shape Fixed Size: true
       Focal Shape Size: 0.05000000074505806
       Invert Z Axis: false
@@ -208,5 +208,5 @@ Window Geometry:
   Views:
     collapsed: false
   Width: 619
-  X: 825
-  Y: 123
+  X: 824
+  Y: 97

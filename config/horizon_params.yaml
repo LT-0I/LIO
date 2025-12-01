@@ -1,4 +1,4 @@
-# ROS runtime parameters for horizon configuration (no %YAML directive for rosparam)
+ # ROS runtime parameters for horizon configuration (no %YAML directive for rosparam)
 # MapManager: 栅格尺寸与更新频率
 #   隧道实验：map_width≈13~15、map_height≈7~9、map_depth≈7~9，可把 map_local_window 降到 40~50 减少局部点。
 #   宽场景（停车场）维持 21×11×21 保守覆盖。map_skip_frame=2 在 Orin NX 下仍可 10 Hz；若 CPU 占用>80% 可调回 3，

@@ -990,7 +990,13 @@ void Estimator::Estimate(std::list<LidarFrame>& lidarFrameList,
   int num_corner_map = 0;
   int num_surf_map = 0;
 
+  // BENCHMARK: Reset optimization metrics for this frame
+  optimization_metrics_ = BenchmarkLogger::OptimizationMetrics();
+  auto frame_start_time = std::chrono::high_resolution_clock::now();
+
   int windowSize = lidarFrameList.size();
+  // BENCHMARK: Record window size
+  optimization_metrics_.window_size = windowSize;
   Eigen::Matrix4d transformTobeMapped = Eigen::Matrix4d::Identity();
   Eigen::Matrix3d exRbl = exTlb.topLeftCorner(3,3).transpose();
   Eigen::Vector3d exPbl = -1.0 * exRbl * exTlb.topRightCorner(3,1);
@@ -1024,6 +1030,12 @@ void Estimator::Estimate(std::list<LidarFrame>& lidarFrameList,
   laserCenWidth_last = map_snapshot->laserCenWidth_last;
   laserCenHeight_last = map_snapshot->laserCenHeight_last;
   laserCenDepth_last = map_snapshot->laserCenDepth_last;
+
+  // BENCHMARK: Record map sizes
+  optimization_metrics_.map_corner_size = map_manager->get_corner_map()->points.size();
+  optimization_metrics_.map_surf_size = map_manager->get_surf_map()->points.size();
+  optimization_metrics_.local_corner_size = laserCloudCornerFromLocal->points.size();
+  optimization_metrics_.local_surf_size = laserCloudSurfFromLocal->points.size();
 
   // store point to line features
   std::vector<std::vector<FeatureLine>> vLineFeatures(windowSize);
@@ -1481,6 +1493,16 @@ void Estimator::Estimate(std::list<LidarFrame>& lidarFrameList,
         }
       }
 
+      // BENCHMARK: Collect feature counts for logging (only on first iteration)
+      if(iterOpt == 0){
+        optimization_metrics_.corner_features = cntCorner;
+        optimization_metrics_.surf_features = cntSurf;
+        optimization_metrics_.nonfeature_points = cntNon;
+        optimization_metrics_.total_features = cntCorner + cntSurf + cntNon;
+        optimization_metrics_.corner_from_map = keptCornerGlobal;
+        optimization_metrics_.corner_from_local = keptCornerLocal;
+      }
+
       ceres::Solver::Options options;
       options.linear_solver_type = ceres::DENSE_SCHUR;
       options.trust_region_strategy_type = ceres::DOGLEG;
@@ -1497,7 +1519,7 @@ void Estimator::Estimate(std::list<LidarFrame>& lidarFrameList,
     if(log_module_timing_){
       ROS_INFO("[Timing] Ceres solve start %.6f", ros::Time::now().toSec());
     }
-    ceres::Solver::Summary summary;
+    // NOTE: 使用外层声明的summary (第1178行)，不要重新声明!
     ceres::Solve(options, &problem, &summary);
     if(log_module_timing_){
       ROS_INFO("[Timing] Ceres solve end   %.6f", ros::Time::now().toSec());
@@ -1520,6 +1542,21 @@ void Estimator::Estimate(std::list<LidarFrame>& lidarFrameList,
     double speed = V_after_opti.norm();
 
     if (deltaR < 0.05 && deltaT < 0.05 || (iterOpt+1) == max_iters){
+      // BENCHMARK: Collect optimization metrics
+      optimization_metrics_.iterations = iterOpt + 1;
+      optimization_metrics_.ceres_iterations = static_cast<int>(summary.iterations.size());
+      optimization_metrics_.initial_cost = summary.initial_cost;
+      optimization_metrics_.final_cost = summary.final_cost;
+      optimization_metrics_.delta_rotation = deltaR;
+      optimization_metrics_.delta_translation = deltaT;
+      optimization_metrics_.converged_early = (deltaR < 0.05 && deltaT < 0.05);
+      optimization_metrics_.optimization_time_ms = last_ceres_solve_ms_;
+      
+      // Calculate total frame time
+      auto frame_end_time = std::chrono::high_resolution_clock::now();
+      double total_ms = std::chrono::duration<double, std::milli>(frame_end_time - frame_start_time).count();
+      optimization_metrics_.preprocess_time_ms = total_ms - optimization_metrics_.optimization_time_ms;
+
       if(log_module_timing_){
         ROS_INFO("[Timing] Marginalization start %.6f", ros::Time::now().toSec());
       }

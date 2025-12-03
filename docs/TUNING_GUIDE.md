@@ -35,13 +35,15 @@ struct ResidualBudgetConfig{
 };
 ```
 
-- **perf_analyzer.py** 支持离线统计各阶段耗时与 RSS，用于调参闭环：  
+- **auto_eval.py** 自动评估脚本，对比OPi与NUC基线，生成综合报告并归档：  
 
-```10:141:scripts/perf_analyzer.py
-STAGE_PATTERN = re.compile(r"Timing\] (.+?)\s+(start|end)\s+(\d+\.\d+)")
-...
-print("Stage Summary (avg / max in ms):")
+```bash
+python3 scripts/auto_eval.py              # 分析并归档
+python3 scripts/auto_eval.py --no-archive # 仅分析不归档
+python3 scripts/auto_eval.py --skip-init 10  # 跳过前10秒初始化漂移
 ```
+
+EVO轨迹对比默认跳过前5秒初始化期，使用 `--align` 和 `--correct_scale` 进行SE(3)对齐。
 
 ---
 
@@ -71,7 +73,7 @@ print("Stage Summary (avg / max in ms):")
 | `local_box_side/vertical` | 横向/竖向窗口 | 4–5 / 3–4 | 8–10 / 6–7 |
 | `local_corner/surf/non_max_points` | Voxel 后局部云点数上限，直接影响 RSS | 150k / 200k / 100k 起步 | 180k / 240k / 120k |
 
-当 `perf_analyzer` 报告残差数量下降或 Ceres 粗糙时，适当放宽窗口或点数；当 RSS 平台 >400 MB，则继续降低上限，每次 20k 步长。
+当 `auto_eval.py` 报告残差数量下降或 Ceres 粗糙时，适当放宽窗口或点数；当 RSS 平台 >400 MB，则继续降低上限，每次 20k 步长。
 
 ---
 
@@ -81,7 +83,7 @@ print("Stage Summary (avg / max in ms):")
 
 - `max_corner_residuals` / `max_surf_residuals` / `max_non_residuals` 控制每帧送入 Ceres 的约束数量。  
 - 隧道角点稀疏，可将角点上限降到 350–400，同时保留足够的平面约束（600–700）。  
-- 如果 `Ceres solve`（来自 `perf_analyzer`）对齐后仍 >25 ms，可整体按 0.8 缩放三个上限。
+- 如果 `Ceres solve`（来自 `auto_eval.py`）对齐后仍 >25 ms，可整体按 0.8 缩放三个上限。
 
 ### 3.2 CornerAdaptive
 
@@ -115,18 +117,29 @@ Residual Budget 基于实时耗时反馈（`target_residual_build_ms`、`target_
 
 ---
 
-## 4. 日志与 RSS 诊断
+## 4. 日志与诊断
 
-1. 在 `horizon_params.yaml` 中保持 `log_module_timing: true`，需要特征统计时再打开 `log_feature_counts`。  
-2. `capture_pose_bt.sh` 会定期记录 RSS，脚本 `scripts/perf_analyzer.py` 解析日志：  
+1. 在 `horizon_params.yaml` 中保持 `enable_debug_log: true`，启用benchmark日志输出。  
+2. 运行实验后使用 `auto_eval.py` 分析日志并归档：  
 
-```100:141:scripts/perf_analyzer.py
-parser.add_argument("--log", required=True, ...)
-...
-print("RSS stats:")
+```bash
+# 分析最新日志，自动归档到 branch_reports/{branch}/
+python3 scripts/auto_eval.py
+
+# 仅分析，不归档
+python3 scripts/auto_eval.py --no-archive
+
+# 跳过前10秒初始化（用于初始化不稳定的场景）
+python3 scripts/auto_eval.py --skip-init 10
 ```
 
-3. 调参循环：跑 bag → 执行 `./scripts/perf_analyzer.py --log 最新.log --rss pose_rss_*.csv` → 记录各阶段 avg/max 与 RSS 平台 → 决定调参方向。
+3. **EVO轨迹对比说明**：
+   - 默认跳过前5秒初始化期（`--skip-init 5`）
+   - 使用 `--align` 进行SE(3)对齐，消除坐标系差异
+   - 使用 `--correct_scale` 进行尺度校正
+   - 若初始化漂移严重，可增大 `--skip-init` 值
+
+4. 调参循环：跑 bag → 执行 `python3 scripts/auto_eval.py` → 查看 Timing Performance 和 Optimization Quality 章节 → 决定调参方向。
 
 ---
 
@@ -144,7 +157,7 @@ print("RSS stats:")
 ### 5.2 地下/室内停车场
 
 - 空间较宽但结构重复：保持默认地图尺寸，只调范围 `forward/backward=70/30`；局部 box 设 `side=8` 保证车位墙体曲面。  
-- Residual Budget 用默认 8/25 ms，但观察 `perf_analyzer` 是否提示 `MapManager update` 过慢；若 >15 ms，可将 `map_skip_frame` 暂时调至 3。
+- Residual Budget 用默认 8/25 ms，但观察 `auto_eval.py` 是否提示 `MapManager update` 过慢；若 >15 ms，可将 `map_skip_frame` 暂时调至 3。
 
 ### 5.3 室外开阔场景
 
@@ -161,12 +174,12 @@ print("RSS stats:")
 
 ## 6. 典型调参流程
 
-1. **建立基线**：在目标场景用默认参数跑一次，记录 `perf_analyzer` 输出（框架、RSS）。  
+1. **建立基线**：在目标场景用默认参数跑一次，记录 `auto_eval.py` 输出（框架、RSS）。  
 2. **判断瓶颈**：  
    - `Estimator::Estimate` / `Ceres solve` 过高 → 调 Residual / AdaptiveBudget；  
    - `MapManager update` 过高或 RSS 上升 → 调 `map_*`、`local_*`。  
 3. **单变量修改**：一次只改一组（例如局部窗口），跑 3–5 分钟并记录日志。  
-4. **对比验证**：使用 `perf_analyzer` 的 avg/max 指标对比前后迭代；若差异显著，再固定该参数进入下一轮。  
+4. **对比验证**：使用 `auto_eval.py` 的 avg/max 指标对比前后迭代；若差异显著，再固定该参数进入下一轮。  
 5. **长期试跑**：隧道等长包需要至少 15 分钟，确认 RSS 是否稳定；若稳定在 <300 MB，即可固化参数。  
 6. **文档回写**：将最终参数填入 `config/horizon_params.yaml`，并在注释中记录“适用场景 + 调参理由”，方便下一次复现。
 
@@ -176,7 +189,7 @@ print("RSS stats:")
 
 - LIO-Livox 源码中的 MapManager / Estimator 参数定义见 `include/MapManager/Map_Manager.h` 与 `include/Estimator/Estimator.h`。  
 - Ceres Solver 官方 “Solver Options” 文档（`/ceres-solver/ceres-solver`）提供了信赖域、Dogleg、迭代上限等可调项，可结合 Residual Budget 共同调优。  
-- `scripts/perf_analyzer.py` 提供标准化的日志解析结果，是评估调参效果的唯一依据。
+- `scripts/auto_eval.py` 提供标准化的日志解析和NUC基线对比，是评估调参效果的主要工具。
 
 ---
 

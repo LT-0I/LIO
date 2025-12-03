@@ -1,6 +1,12 @@
 #include "Estimator/Estimator.h"
+#include "utils/BenchmarkLogger.h"
 #include <omp.h>
+#include <chrono>
 typedef pcl::PointXYZINormal PointType;
+
+// Benchmark logging globals
+BenchmarkLogger g_benchmark_logger;
+bool g_enable_debug_log = false;
 
 int WINDOWSIZE;
 bool LidarIMUInited = false;
@@ -86,6 +92,19 @@ void pubOdometry(const Eigen::Matrix4d& newPose, double& timefullCloud){
 	};
 	pubGps.publish(gps);
 
+  // BENCHMARK: Log trajectory in TUM format (uses bag time, NOT wall time)
+  if (g_enable_debug_log) {
+    g_benchmark_logger.logTrajectoryTUM(
+        timefullCloud,
+        newPosition.x(),
+        newPosition.y(),
+        newPosition.z(),
+        newQuat.x(),
+        newQuat.y(),
+        newQuat.z(),
+        newQuat.w()
+    );
+  }
 }
 
 void fullCallBack(const sensor_msgs::PointCloud2ConstPtr &msg){
@@ -526,6 +545,33 @@ void process(){
 	    // publish odometry rostopic
 	    pubOdometry(transformTobeMapped, lidar_list->front().timeStamp);
 
+      // BENCHMARK: Log internal statistics to CSV
+      if (g_enable_debug_log) {
+        // Get optimization metrics from Estimator (contains timing, features, convergence data)
+        BenchmarkLogger::OptimizationMetrics metrics = estimator->getOptimizationMetrics();
+        
+        // Add point cloud and IMU metrics (only available in PoseEstimation)
+        metrics.raw_cloud_size = lidar_list->front().laserCloud->points.size();
+        metrics.imu_msg_count = vimuMsg.size();
+        metrics.imu_initialized = LidarIMUInited;
+        
+        // Calculate IMU time span
+        if (!vimuMsg.empty() && vimuMsg.size() > 1) {
+          metrics.imu_dt = vimuMsg.back()->header.stamp.toSec() - 
+                           vimuMsg.front()->header.stamp.toSec();
+        }
+        
+        // Calculate total frame time (preprocess already set by Estimator, add overhead)
+        double total_frame_time_ms = metrics.preprocess_time_ms + metrics.optimization_time_ms;
+        
+        // Log to CSV file using message timestamp (bag time)
+        g_benchmark_logger.logInternalStats(
+            lidar_list->front().timeStamp,
+            total_frame_time_ms,
+            metrics
+        );
+      }
+
       // publish lidar points
       int laserCloudFullResNum = lidar_list->front().laserCloud->points.size();
       pcl::PointCloud<PointType>::Ptr laserCloudAfterEstimate(new pcl::PointCloud<PointType>());
@@ -598,6 +644,24 @@ int main(int argc, char** argv)
   ros::param::get("~filter_parameter_corner",filter_parameter_corner);
   ros::param::get("~filter_parameter_surf",filter_parameter_surf);
   ros::param::get("~IMU_Mode",IMU_Mode);
+
+  // BENCHMARK: Get enable_debug_log parameter
+  ros::param::param<bool>("~enable_debug_log", g_enable_debug_log, false);
+  
+  // Initialize benchmark logger if enabled
+  if (g_enable_debug_log) {
+    std::string output_dir;
+    ros::param::param<std::string>("~benchmark_output_dir", output_dir, ".");
+    
+    // Initialize logger - creates timestamped subfolder and files:
+    //   logs/YYYYMMDD_HHMMSS/internal_stats_YYYYMMDD_HHMMSS.csv
+    //   logs/YYYYMMDD_HHMMSS/benchmark_traj_YYYYMMDD_HHMMSS.txt
+    g_benchmark_logger.init(true, output_dir);
+    
+    ROS_INFO("Benchmark logging enabled.");
+    ROS_INFO("  Session: %s", g_benchmark_logger.getSessionTimestamp().c_str());
+    ROS_INFO("  Output folder: %s", g_benchmark_logger.getOutputFolder().c_str());
+  }
 	std::vector<double> vecTlb;
 	ros::param::get("~Extrinsic_Tlb",vecTlb);
 

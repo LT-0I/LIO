@@ -20,6 +20,7 @@
 #include "MapManager/Map_Manager.h"
 #include "utils/ceresfunc.h"
 #include "utils/VoxelIndex.h"
+#include "utils/BenchmarkLogger.h"
 #include "IMUIntegrator/IMUIntegrator.h"
 #include <chrono>
 
@@ -280,7 +281,14 @@ public:
 						   const pcl::PointCloud<PointType>::Ptr& laserCloudNonFeatureStack,
 						   const Eigen::Matrix4d& transformTobeMapped);
 
+	/** \brief Get optimization metrics for benchmark logging */
+	const BenchmarkLogger::OptimizationMetrics& getOptimizationMetrics() const {
+		return optimization_metrics_;
+	}
+
 private:
+	// Benchmark optimization metrics collected during Estimate()
+	BenchmarkLogger::OptimizationMetrics optimization_metrics_;
 	EstimatorResidualConfig residual_config_;
 	/** \brief store map points */
 	MAP_MANAGER* map_manager;

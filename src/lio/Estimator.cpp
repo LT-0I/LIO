@@ -1526,10 +1526,20 @@ void Estimator::Estimate(std::list<LidarFrame>& lidarFrameList,
       ceres::Solver::Options options;
       options.linear_solver_type = ceres::DENSE_SCHUR;
       options.trust_region_strategy_type = ceres::DOGLEG;
-      options.max_num_iterations = 8;
-      options.function_tolerance = 1e-4;
-      options.gradient_tolerance = 1e-4;
-      options.parameter_tolerance = 1e-4;
+      
+      // 初始化增强: 前15帧使用更严格的优化参数
+      // 目的: 在初始阶段建立准确的位姿基准，防止snowball漂移
+      if (frame_count < 15) {
+        options.max_num_iterations = 15;    // 正常8，初始化时增加
+        options.function_tolerance = 1e-5;  // 正常1e-4，初始化时更严格
+        options.gradient_tolerance = 1e-5;
+        options.parameter_tolerance = 1e-5;
+      } else {
+        options.max_num_iterations = 8;
+        options.function_tolerance = 1e-4;
+        options.gradient_tolerance = 1e-4;
+        options.parameter_tolerance = 1e-4;
+      }
       options.use_nonmonotonic_steps = true;
       options.max_consecutive_nonmonotonic_steps = 3;
       options.minimizer_progress_to_stdout = false;
@@ -1561,7 +1571,12 @@ void Estimator::Estimate(std::list<LidarFrame>& lidarFrameList,
     double deltaT = (t_before_opti - t_after_opti).norm();
     double speed = V_after_opti.norm();
 
-    if (deltaR < 0.05 && deltaT < 0.05 || (iterOpt+1) == max_iters){
+    // 初始化增强: 前15帧要求更严格的收敛条件或更多迭代
+    bool early_converge = (deltaR < 0.05 && deltaT < 0.05);
+    int min_iters = (frame_count < 15) ? 3 : 1;  // 初始化时至少3次外层迭代
+    bool force_continue = (iterOpt + 1 < min_iters) && (iterOpt + 1 < max_iters);
+    
+    if ((early_converge && !force_continue) || (iterOpt+1) == max_iters){
       // BENCHMARK: Collect optimization metrics
       optimization_metrics_.iterations = iterOpt + 1;
       optimization_metrics_.ceres_iterations = static_cast<int>(summary.iterations.size());
@@ -1585,7 +1600,14 @@ void Estimator::Estimate(std::list<LidarFrame>& lidarFrameList,
         ROS_INFO("Estimator pose_delta: deltaR=%.4f deg deltaT=%.4f m speed=%.2f m/s iters=%d",
                  deltaR, deltaT, speed, iterOpt + 1);
       }
-      ROS_INFO("Frame: %u", frame_count++);
+      if (frame_count < 15) {
+        ROS_INFO("Frame: %u [INIT_ENHANCE] outer_iters=%d ceres_iters=%d", 
+                 frame_count, iterOpt + 1, 
+                 static_cast<int>(summary.iterations.size()));
+      } else {
+        ROS_INFO("Frame: %u", frame_count);
+      }
+      frame_count++;
       if(windowSize != SLIDEWINDOWSIZE) break;
       // apply marginalization
       auto *marginalization_info = new MarginalizationInfo();

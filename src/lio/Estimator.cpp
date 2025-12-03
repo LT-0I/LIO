@@ -450,7 +450,7 @@ void Estimator::processPointToPlan(std::vector<std::unique_ptr<ceres::CostFuncti
 
         bool planeValid = true;
         for (int j = 0; j < 5; j++) {
-          if (std::fabs(pa * globalSurfMap->points[_pointSearchInd[j]].x +
+            if (std::fabs(pa * globalSurfMap->points[_pointSearchInd[j]].x +
                         pb * globalSurfMap->points[_pointSearchInd[j]].y +
                         pc * globalSurfMap->points[_pointSearchInd[j]].z + pd) > 0.2) {
             planeValid = false;
@@ -610,15 +610,15 @@ void Estimator::processPointToPlanVec(std::vector<std::unique_ptr<ceres::CostFun
         pc /= ps;
         pd /= ps;
 
-        bool planeValid = true;
-        for (int j = 0; j < 5; j++) {
-          if (std::fabs(pa * globalSurfMapPlanVec->points[_pointSearchInd[j]].x +
-                        pb * globalSurfMapPlanVec->points[_pointSearchInd[j]].y +
-                        pc * globalSurfMapPlanVec->points[_pointSearchInd[j]].z + pd) > 0.2) {
-            planeValid = false;
-            break;
-          }
+      bool planeValid = true;
+      for (int j = 0; j < 5; j++) {
+        if (std::fabs(pa * globalSurfMapPlanVec->points[_pointSearchInd[j]].x +
+                      pb * globalSurfMapPlanVec->points[_pointSearchInd[j]].y +
+                      pc * globalSurfMapPlanVec->points[_pointSearchInd[j]].z + pd) > 0.2) {
+          planeValid = false;
+          break;
         }
+      }
 
         if (planeValid) {
           debug_num12 ++;
@@ -1054,11 +1054,30 @@ void Estimator::Estimate(std::list<LidarFrame>& lidarFrameList,
     v.reserve(2000);
   }
 
-  // 恢复到稳定版本的固定值
-  // 稳定版本不使用动态 thres_dist 和 plan_weight_tan
+  // 动态 thres_dist 和 plan_weight_tan (iteration_005 隧道优化)
+  // 当全局匹配率下降时扩大搜索范围，打破漂移恶性循环
   if(windowSize == SLIDEWINDOWSIZE) {
-    plan_weight_tan = 0.0003;
-    thres_dist = 1.0;
+    // 动态搜索半径: 根据上一帧的全局匹配情况调整
+    double base_thres_dist = 1.0;
+    if (last_avg_global_kd_ < 100.0 && last_avg_global_kd_ > 0) {
+      // 线性扩展: avg_global_kd=100 时 1.0m, avg_global_kd=20 时 4.0m
+      double scale = 1.0 + 3.0 * (100.0 - last_avg_global_kd_) / 80.0;
+      scale = std::min(scale, 4.0);
+      dynamic_thres_dist_ = base_thres_dist * scale;
+    } else {
+      dynamic_thres_dist_ = base_thres_dist;
+    }
+    thres_dist = dynamic_thres_dist_;
+
+    // 动态面点权重: 当角点严重不足时增强面点约束
+    // 隧道场景下面点丰富，可以提供更多约束
+    if (last_avg_global_kd_ < 50.0) {
+      plan_weight_tan = 0.01;  // 低特征时增强 (原0.0003)
+    } else if (last_avg_global_kd_ < 100.0) {
+      plan_weight_tan = 0.003; // 中等特征时轻微增强
+    } else {
+      plan_weight_tan = 0.0003; // 正常情况
+    }
   } else {
     plan_weight_tan = 0.0;
     thres_dist = 25.0;
@@ -1251,7 +1270,8 @@ void Estimator::Estimate(std::list<LidarFrame>& lidarFrameList,
       return (idx % stride) == 0;
     };
       if(windowSize == SLIDEWINDOWSIZE) {
-        thres_dist = 1.0;
+        // 注意: thres_dist 已在函数开头根据 last_avg_global_kd_ 动态设置
+        // 此处不再覆盖，保持动态值 (iteration_005 修复)
         if(iterOpt == 0){
           for(int f=0; f<windowSize; ++f){
           candidateCorner += static_cast<int>(edgesLine[f].size());

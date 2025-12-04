@@ -1528,17 +1528,20 @@ void Estimator::Estimate(std::list<LidarFrame>& lidarFrameList,
       options.trust_region_strategy_type = ceres::DOGLEG;
       
       // 初始化增强: 前15帧使用更严格的优化参数
-      // 目的: 在初始阶段建立准确的位姿基准，防止snowball漂移
+      // ========== final5: 强化 Ceres 优化 ==========
+      // 目的: 确保优化充分收敛，避免早收敛到错误位置
       if (frame_count < 15) {
-        options.max_num_iterations = 15;    // 正常8，初始化时增加
-        options.function_tolerance = 1e-5;  // 正常1e-4，初始化时更严格
+        // 初始化帧：最严格的参数
+        options.max_num_iterations = 20;    // 从15增加到20
+        options.function_tolerance = 1e-6;  // 从1e-5收紧到1e-6
+        options.gradient_tolerance = 1e-6;
+        options.parameter_tolerance = 1e-6;
+      } else {
+        // 正常帧：也要充分优化
+        options.max_num_iterations = 15;    // 从8增加到15
+        options.function_tolerance = 1e-5;  // 从1e-4收紧到1e-5
         options.gradient_tolerance = 1e-5;
         options.parameter_tolerance = 1e-5;
-      } else {
-        options.max_num_iterations = 8;
-        options.function_tolerance = 1e-4;
-        options.gradient_tolerance = 1e-4;
-        options.parameter_tolerance = 1e-4;
       }
       options.use_nonmonotonic_steps = true;
       options.max_consecutive_nonmonotonic_steps = 3;
@@ -1571,9 +1574,10 @@ void Estimator::Estimate(std::list<LidarFrame>& lidarFrameList,
     double deltaT = (t_before_opti - t_after_opti).norm();
     double speed = V_after_opti.norm();
 
-    // 初始化增强: 前15帧要求更严格的收敛条件或更多迭代
-    bool early_converge = (deltaR < 0.05 && deltaT < 0.05);
-    int min_iters = (frame_count < 15) ? 3 : 1;  // 初始化时至少3次外层迭代
+    // ========== final5: 强化收敛条件 ==========
+    // 更严格的早收敛阈值，防止过早停止
+    bool early_converge = (deltaR < 0.02 && deltaT < 0.02);  // 从0.05收紧到0.02
+    int min_iters = (frame_count < 15) ? 4 : 2;  // 初始化至少4次，正常至少2次（从3/1增加）
     bool force_continue = (iterOpt + 1 < min_iters) && (iterOpt + 1 < max_iters);
     
     if ((early_converge && !force_continue) || (iterOpt+1) == max_iters){

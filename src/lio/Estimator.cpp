@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <memory>
+#include <set>
 #include <thread>
 
 Estimator::Estimator(const float& filter_corner,
@@ -964,22 +965,31 @@ void Estimator::EstimateLidarPose(std::list<LidarFrame>& lidarFrameList,
   transformTobeMapped.topLeftCorner(3,3) = lidarFrameList.front().Q * exRbl;
   transformTobeMapped.topRightCorner(3,1) = lidarFrameList.front().Q * exPbl + lidarFrameList.front().P;
 
-  std::unique_lock<std::mutex> locker(mtx_Map);
-  *laserCloudCornerForMap = *laserCloudCornerStack[0];
-  *laserCloudSurfForMap = *laserCloudSurfStack[0];
-  *laserCloudNonFeatureForMap = *laserCloudNonFeatureStack[0];
-  transformForMap = transformTobeMapped;
-  laserCloudCornerFromLocal->clear();
-  laserCloudSurfFromLocal->clear();
-  laserCloudNonFeatureFromLocal->clear();
-  if(log_module_timing_){
-    ROS_INFO("[Timing] MapManager update start %.6f", ros::Time::now().toSec());
+  // ========== final4: 置信度感知地图更新 ==========
+  // 只有置信度足够高时才更新地图
+  if (should_update_map_) {
+    std::unique_lock<std::mutex> locker(mtx_Map);
+    *laserCloudCornerForMap = *laserCloudCornerStack[0];
+    *laserCloudSurfForMap = *laserCloudSurfStack[0];
+    *laserCloudNonFeatureForMap = *laserCloudNonFeatureStack[0];
+    transformForMap = transformTobeMapped;
+    laserCloudCornerFromLocal->clear();
+    laserCloudSurfFromLocal->clear();
+    laserCloudNonFeatureFromLocal->clear();
+    if(log_module_timing_){
+      ROS_INFO("[Timing] MapManager update start %.6f", ros::Time::now().toSec());
+    }
+    MapIncrementLocal(laserCloudCornerForMap,laserCloudSurfForMap,laserCloudNonFeatureForMap,transformTobeMapped);
+    if(log_module_timing_){
+      ROS_INFO("[Timing] MapManager update end   %.6f", ros::Time::now().toSec());
+    }
+    locker.unlock();
+  } else {
+    // 低置信度时只清空局部地图缓存，不更新地图
+    laserCloudCornerFromLocal->clear();
+    laserCloudSurfFromLocal->clear();
+    laserCloudNonFeatureFromLocal->clear();
   }
-  MapIncrementLocal(laserCloudCornerForMap,laserCloudSurfForMap,laserCloudNonFeatureForMap,transformTobeMapped);
-  if(log_module_timing_){
-    ROS_INFO("[Timing] MapManager update end   %.6f", ros::Time::now().toSec());
-  }
-  locker.unlock();
 }
 
 void Estimator::Estimate(std::list<LidarFrame>& lidarFrameList,
@@ -1263,79 +1273,123 @@ void Estimator::Estimate(std::list<LidarFrame>& lidarFrameList,
     const int maxSurfResidualsPerFrame = std::max(1, runtime_surf_limit_);
     const int maxNonResidualsPerFrame = std::max(1, runtime_non_limit_);
     const double featureErrorThreshold = residual_config_.feature_error_threshold;
-    auto shouldKeepFeature = [](int idx, int total, int kept, int limit) -> bool {
-      if(limit <= 0 || total <= limit) return true;
-      if(kept >= limit) return false;
-      const int stride = (total + limit - 1) / limit;
-      return (idx % stride) == 0;
+    
+    // ========== final4: 智能残差选择 ==========
+    // 按匹配质量(误差)排序，优先选择低误差(高质量)的特征
+    // 结构体用于存储候选特征的索引和误差
+    struct FeatureCandidate {
+      int frame_idx;
+      size_t feature_idx;
+      double error;
+      bool from_global;
     };
+    
+    auto selectTopFeatures = [](std::vector<FeatureCandidate>& candidates, int limit) {
+      if(limit <= 0 || static_cast<int>(candidates.size()) <= limit) return;
+      // 按误差升序排序 (低误差 = 高质量)
+      std::partial_sort(candidates.begin(), 
+                        candidates.begin() + std::min(limit, static_cast<int>(candidates.size())),
+                        candidates.end(),
+                        [](const FeatureCandidate& a, const FeatureCandidate& b) {
+                          return std::fabs(a.error) < std::fabs(b.error);
+                        });
+      candidates.resize(limit);
+    };
+    
       if(windowSize == SLIDEWINDOWSIZE) {
         // 注意: thres_dist 已在函数开头根据 last_avg_global_kd_ 动态设置
         // 此处不再覆盖，保持动态值 (iteration_005 修复)
         if(iterOpt == 0){
+          // ===== Phase 1: 收集所有有效候选特征 =====
+          std::vector<FeatureCandidate> cornerCandidates;
+          std::vector<FeatureCandidate> surfCandidates;
+          std::vector<FeatureCandidate> nonCandidates;
+          
           for(int f=0; f<windowSize; ++f){
-          candidateCorner += static_cast<int>(edgesLine[f].size());
-          candidateSurf += static_cast<int>(edgesPlan[f].size());
-          candidateNon += static_cast<int>(edgesNon[f].size());
-          const int totalCorner = edgesLine[f].size();
-          int keptCornerLocalFrame = 0;
-          for(size_t idx=0; idx<edgesLine[f].size(); ++idx){
-            if(edgesLine[f][idx]){
-              if(vLineFeatures[f][idx].from_global){
-                candidateCornerGlobal++;
-              }else{
-                candidateCornerLocal++;
+            // 收集 Corner 候选
+            for(size_t idx=0; idx<edgesLine[f].size(); ++idx){
+              if(edgesLine[f][idx]){
+                bool is_global = vLineFeatures[f][idx].from_global;
+                if(is_global) candidateCornerGlobal++;
+                else candidateCornerLocal++;
+                candidateCorner++;
+                
+                if(std::fabs(vLineFeatures[f][idx].error) > featureErrorThreshold){
+                  cornerCandidates.push_back({f, idx, vLineFeatures[f][idx].error, is_global});
+                }
               }
             }
-            if(edgesLine[f][idx] && std::fabs(vLineFeatures[f][idx].error) > featureErrorThreshold &&
-               shouldKeepFeature(static_cast<int>(idx), totalCorner, keptCornerLocalFrame, maxCornerResidualsPerFrame)){
-              problem.AddResidualBlock(edgesLine[f][idx].get(), loss_function, para_PR[f]);
-              edgesLine[f][idx].release();
-              vLineFeatures[f][idx].valid = true;
-              ++keptCornerLocalFrame;
-              ++cntCorner;
-              if(vLineFeatures[f][idx].from_global){
-                ++keptCornerGlobal;
-              }else{
-                ++keptCornerLocal;
+            // 收集 Surf 候选
+            for(size_t idx=0; idx<edgesPlan[f].size(); ++idx){
+              if(edgesPlan[f][idx]){
+                candidateSurf++;
+                if(std::fabs(vPlanFeatures[f][idx].error) > featureErrorThreshold){
+                  surfCandidates.push_back({f, idx, vPlanFeatures[f][idx].error, false});
+                }
               }
-            }else{
-              vLineFeatures[f][idx].valid = false;
-              edgesLine[f][idx].reset();
+            }
+            // 收集 Non-Feature 候选
+            for(size_t idx=0; idx<edgesNon[f].size(); ++idx){
+              if(edgesNon[f][idx]){
+                candidateNon++;
+                if(std::fabs(vNonFeatures[f][idx].error) > featureErrorThreshold){
+                  nonCandidates.push_back({f, idx, vNonFeatures[f][idx].error, false});
+                }
+              }
             }
           }
-
-          const int totalSurf = edgesPlan[f].size();
-          int keptSurfLocal = 0;
-          for(size_t idx=0; idx<edgesPlan[f].size(); ++idx){
-            if(edgesPlan[f][idx] && std::fabs(vPlanFeatures[f][idx].error) > featureErrorThreshold &&
-               shouldKeepFeature(static_cast<int>(idx), totalSurf, keptSurfLocal, maxSurfResidualsPerFrame)){
-              problem.AddResidualBlock(edgesPlan[f][idx].get(), loss_function, para_PR[f]);
-              edgesPlan[f][idx].release();
-              vPlanFeatures[f][idx].valid = true;
-              ++keptSurfLocal;
-              ++cntSurf;
-            }else{
-              vPlanFeatures[f][idx].valid = false;
-              edgesPlan[f][idx].reset();
+          
+          // ===== Phase 2: 智能选择 - 按质量排序并截取 =====
+          selectTopFeatures(cornerCandidates, maxCornerResidualsPerFrame);
+          selectTopFeatures(surfCandidates, maxSurfResidualsPerFrame);
+          selectTopFeatures(nonCandidates, maxNonResidualsPerFrame);
+          
+          // 创建快速查找集合
+          std::set<std::pair<int, size_t>> selectedCorners, selectedSurfs, selectedNons;
+          for(const auto& c : cornerCandidates) selectedCorners.insert({c.frame_idx, c.feature_idx});
+          for(const auto& c : surfCandidates) selectedSurfs.insert({c.frame_idx, c.feature_idx});
+          for(const auto& c : nonCandidates) selectedNons.insert({c.frame_idx, c.feature_idx});
+          
+          // ===== Phase 3: 添加选中的残差到问题 =====
+          for(int f=0; f<windowSize; ++f){
+            // Corner
+            for(size_t idx=0; idx<edgesLine[f].size(); ++idx){
+              if(edgesLine[f][idx] && selectedCorners.count({f, idx})){
+                problem.AddResidualBlock(edgesLine[f][idx].get(), loss_function, para_PR[f]);
+                edgesLine[f][idx].release();
+                vLineFeatures[f][idx].valid = true;
+                ++cntCorner;
+                if(vLineFeatures[f][idx].from_global) ++keptCornerGlobal;
+                else ++keptCornerLocal;
+              }else{
+                vLineFeatures[f][idx].valid = false;
+                edgesLine[f][idx].reset();
+              }
             }
-          }
-
-          const int totalNon = edgesNon[f].size();
-          int keptNonLocal = 0;
-          for(size_t idx=0; idx<edgesNon[f].size(); ++idx){
-            if(edgesNon[f][idx] && std::fabs(vNonFeatures[f][idx].error) > featureErrorThreshold &&
-               shouldKeepFeature(static_cast<int>(idx), totalNon, keptNonLocal, maxNonResidualsPerFrame)){
-              problem.AddResidualBlock(edgesNon[f][idx].get(), loss_function, para_PR[f]);
-              edgesNon[f][idx].release();
-              vNonFeatures[f][idx].valid = true;
-              ++keptNonLocal;
-              ++cntNon;
-            }else{
-              vNonFeatures[f][idx].valid = false;
-              edgesNon[f][idx].reset();
+            // Surf
+            for(size_t idx=0; idx<edgesPlan[f].size(); ++idx){
+              if(edgesPlan[f][idx] && selectedSurfs.count({f, idx})){
+                problem.AddResidualBlock(edgesPlan[f][idx].get(), loss_function, para_PR[f]);
+                edgesPlan[f][idx].release();
+                vPlanFeatures[f][idx].valid = true;
+                ++cntSurf;
+              }else{
+                vPlanFeatures[f][idx].valid = false;
+                edgesPlan[f][idx].reset();
+              }
             }
-          }
+            // Non-Feature
+            for(size_t idx=0; idx<edgesNon[f].size(); ++idx){
+              if(edgesNon[f][idx] && selectedNons.count({f, idx})){
+                problem.AddResidualBlock(edgesNon[f][idx].get(), loss_function, para_PR[f]);
+                edgesNon[f][idx].release();
+                vNonFeatures[f][idx].valid = true;
+                ++cntNon;
+              }else{
+                vNonFeatures[f][idx].valid = false;
+                edgesNon[f][idx].reset();
+              }
+            }
           }
         }else{
           for(int f=0; f<windowSize; ++f){
@@ -1391,6 +1445,14 @@ void Estimator::Estimate(std::list<LidarFrame>& lidarFrameList,
           }
         }
       } else {
+          // 非滑动窗口模式：使用简单的步幅采样
+          auto shouldKeepFeatureSimple = [](int idx, int total, int kept, int limit) -> bool {
+            if(limit <= 0 || total <= limit) return true;
+            if(kept >= limit) return false;
+            const int stride = (total + limit - 1) / limit;
+            return (idx % stride) == 0;
+          };
+          
           if(iterOpt == 0) {
             thres_dist = 10.0;
           } else {
@@ -1412,7 +1474,7 @@ void Estimator::Estimate(std::list<LidarFrame>& lidarFrameList,
               }
             }
             if(edgesLine[f][idx] && std::fabs(vLineFeatures[f][idx].error) > featureErrorThreshold &&
-               shouldKeepFeature(static_cast<int>(idx), totalCorner, keptCornerLocalFrame, maxCornerResidualsPerFrame)){
+               shouldKeepFeatureSimple(static_cast<int>(idx), totalCorner, keptCornerLocalFrame, maxCornerResidualsPerFrame)){
               problem.AddResidualBlock(edgesLine[f][idx].get(), loss_function, para_PR[f]);
               edgesLine[f][idx].release();
               vLineFeatures[f][idx].valid = true;
@@ -1433,7 +1495,7 @@ void Estimator::Estimate(std::list<LidarFrame>& lidarFrameList,
           int keptSurfLocalFrame = 0;
           for(size_t idx=0; idx<edgesPlan[f].size(); ++idx){
             if(edgesPlan[f][idx] && std::fabs(vPlanFeatures[f][idx].error) > featureErrorThreshold &&
-               shouldKeepFeature(static_cast<int>(idx), totalSurf, keptSurfLocalFrame, maxSurfResidualsPerFrame)){
+               shouldKeepFeatureSimple(static_cast<int>(idx), totalSurf, keptSurfLocalFrame, maxSurfResidualsPerFrame)){
               problem.AddResidualBlock(edgesPlan[f][idx].get(), loss_function, para_PR[f]);
               edgesPlan[f][idx].release();
               vPlanFeatures[f][idx].valid = true;
@@ -1449,7 +1511,7 @@ void Estimator::Estimate(std::list<LidarFrame>& lidarFrameList,
           int keptNonLocalFrame = 0;
           for(size_t idx=0; idx<edgesNon[f].size(); ++idx){
             if(edgesNon[f][idx] && std::fabs(vNonFeatures[f][idx].error) > featureErrorThreshold &&
-               shouldKeepFeature(static_cast<int>(idx), totalNon, keptNonLocalFrame, maxNonResidualsPerFrame)){
+               shouldKeepFeatureSimple(static_cast<int>(idx), totalNon, keptNonLocalFrame, maxNonResidualsPerFrame)){
               problem.AddResidualBlock(edgesNon[f][idx].get(), loss_function, para_PR[f]);
               edgesNon[f][idx].release();
               vNonFeatures[f][idx].valid = true;
@@ -1591,6 +1653,31 @@ void Estimator::Estimate(std::list<LidarFrame>& lidarFrameList,
       auto frame_end_time = std::chrono::high_resolution_clock::now();
       double total_ms = std::chrono::duration<double, std::milli>(frame_end_time - frame_start_time).count();
       optimization_metrics_.preprocess_time_ms = total_ms - optimization_metrics_.optimization_time_ms;
+
+      // ========== final4: 置信度感知地图更新 ==========
+      // 计算位姿置信度 (使用已收集的 metrics)
+      double cost_reduction_ratio = (summary.initial_cost > 1e-6) ? 
+          (summary.final_cost / summary.initial_cost) : 1.0;
+      int total_features = optimization_metrics_.total_features;
+      pose_confidence_ = ComputePoseConfidence(cost_reduction_ratio, total_features, deltaR, deltaT);
+      
+      // 决定是否更新地图
+      if (pose_confidence_ >= CONFIDENCE_THRESHOLD) {
+        should_update_map_ = true;
+        consecutive_low_confidence_ = 0;
+      } else {
+        consecutive_low_confidence_++;
+        // 连续低置信度超过阈值时，强制更新以避免地图"冻结"
+        if (consecutive_low_confidence_ >= MAX_LOW_CONFIDENCE_FRAMES) {
+          should_update_map_ = true;
+          ROS_WARN("Low confidence for %d frames, forcing map update", consecutive_low_confidence_);
+          consecutive_low_confidence_ = 0;
+        } else {
+          should_update_map_ = false;
+          ROS_INFO("Skipping map update: confidence=%.2f < %.2f (consecutive=%d)", 
+                   pose_confidence_, CONFIDENCE_THRESHOLD, consecutive_low_confidence_);
+        }
+      }
 
       if(log_module_timing_){
         ROS_INFO("[Timing] Marginalization start %.6f", ros::Time::now().toSec());
@@ -1885,4 +1972,75 @@ void Estimator::MapIncrementLocal(const pcl::PointCloud<PointType>::Ptr& laserCl
   EnforceLocalMapLimit(laserCloudSurfFromLocal, local_surf_max_points_);
   EnforceLocalMapLimit(laserCloudNonFeatureFromLocal, local_non_max_points_);
   localMapID ++;
+}
+
+/**
+ * @brief 计算位姿估计置信度
+ * 
+ * 基于多个因素综合评估当前位姿估计的可靠性：
+ * 1. 优化收敛程度 (cost reduction)
+ * 2. 特征数量
+ * 3. 位姿变化量
+ * 
+ * @param cost_reduction_ratio 代价降低比例 (final_cost / initial_cost)
+ * @param feature_count 总特征数量
+ * @param delta_rotation 旋转变化量 (度)
+ * @param delta_translation 平移变化量 (米)
+ * @return 置信度 [0.0, 1.0]
+ */
+double Estimator::ComputePoseConfidence(double cost_reduction_ratio, int feature_count,
+                                        double delta_rotation, double delta_translation) {
+  double confidence = 1.0;
+  
+  // 1. 特征数量评分 (0-0.4)
+  // 特征太少 → 低置信度
+  const int MIN_FEATURES = 500;
+  const int GOOD_FEATURES = 2000;
+  double feature_score = 0.0;
+  if (feature_count < MIN_FEATURES) {
+    feature_score = 0.0;  // 特征严重不足
+  } else if (feature_count < GOOD_FEATURES) {
+    feature_score = 0.4 * (feature_count - MIN_FEATURES) / (GOOD_FEATURES - MIN_FEATURES);
+  } else {
+    feature_score = 0.4;
+  }
+  
+  // 2. 优化收敛评分 (0-0.3)
+  // cost_reduction_ratio 接近 1.0 表示没有优化效果（可能陷入局部最优或匹配错误）
+  // 理想情况：cost_reduction_ratio < 0.99 (至少 1% 的代价降低)
+  double convergence_score = 0.0;
+  if (cost_reduction_ratio > 0.999) {
+    // 几乎没有优化 → 可能匹配错误或已在局部最优
+    convergence_score = 0.05;
+  } else if (cost_reduction_ratio > 0.99) {
+    convergence_score = 0.15;
+  } else if (cost_reduction_ratio > 0.95) {
+    convergence_score = 0.25;
+  } else {
+    convergence_score = 0.3;  // 显著收敛
+  }
+  
+  // 3. 位姿变化评分 (0-0.3)
+  // 变化太大可能是异常；变化太小可能是没有优化
+  double pose_change_score = 0.0;
+  if (delta_rotation > 5.0 || delta_translation > 1.0) {
+    // 位姿变化异常大 → 可能是跳变
+    pose_change_score = 0.0;
+  } else if (delta_rotation > 2.0 || delta_translation > 0.5) {
+    // 变化较大但可接受
+    pose_change_score = 0.15;
+  } else if (delta_rotation < 0.001 && delta_translation < 0.001) {
+    // 几乎没有变化 → 可能是静止或优化失败
+    pose_change_score = 0.2;
+  } else {
+    // 正常变化范围
+    pose_change_score = 0.3;
+  }
+  
+  confidence = feature_score + convergence_score + pose_change_score;
+  
+  // 确保置信度在 [0, 1] 范围内
+  confidence = std::max(0.0, std::min(1.0, confidence));
+  
+  return confidence;
 }

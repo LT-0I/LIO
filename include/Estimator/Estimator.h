@@ -286,6 +286,18 @@ public:
 		return optimization_metrics_;
 	}
 
+	/** \brief Get pose confidence for map update decision
+	 *  Returns value between 0.0 (low confidence) and 1.0 (high confidence)
+	 */
+	double getPoseConfidence() const {
+		return pose_confidence_;
+	}
+
+	/** \brief Check if map should be updated based on pose confidence */
+	bool shouldUpdateMap() const {
+		return should_update_map_;
+	}
+
 private:
 	// Benchmark optimization metrics collected during Estimate()
 	BenchmarkLogger::OptimizationMetrics optimization_metrics_;
@@ -374,7 +386,16 @@ private:
 	double last_speed_ = 10.0;           // 上一帧的速度估计 (m/s)
 	int consecutive_low_speed_frames_ = 0; // 连续低速帧计数
 
+	// 置信度感知地图更新 (final4)
+	double pose_confidence_ = 1.0;       // 当前帧位姿置信度 [0.0, 1.0]
+	bool should_update_map_ = true;      // 是否应该更新地图
+	int consecutive_low_confidence_ = 0; // 连续低置信度帧计数
+	static constexpr double CONFIDENCE_THRESHOLD = 0.5;  // 地图更新置信度门槛
+	static constexpr int MAX_LOW_CONFIDENCE_FRAMES = 10; // 最大连续低置信度帧数
+
 	void UpdateResidualLimits(double build_ms, double solve_ms);
+	double ComputePoseConfidence(double cost_reduction_ratio, int feature_count, 
+	                             double delta_rotation, double delta_translation);
 	void EnforceLocalMapLimit(pcl::PointCloud<PointType>::Ptr& cloud, int max_points);
 };
 

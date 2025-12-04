@@ -36,11 +36,11 @@ local_surf_max_points: 240000
 local_non_max_points: 120000
 
 # Estimator: 残差与特征阈值
-#   隧道角点稀少：max_corner_residuals=350~400、max_surf_residuals=600~700、max_non_residuals=250~300；
-#   若 `Ceres solve` >25 ms，可整体按 0.8 比例下调。feature_error_threshold=0 维持严格筛选，除非需要调试残差。
-max_corner_residuals: 500
-max_surf_residuals: 750
-max_non_residuals: 350
+#   final4: 关闭残差限制，使用智能残差选择 (按质量排序)
+#   max_*_residuals 设置为较高值，实际由智能选择算法控制
+max_corner_residuals: 2000
+max_surf_residuals: 4000
+max_non_residuals: 1000
 feature_error_threshold: 0
 
 # Diagnostics: 日志与统计控制
@@ -64,9 +64,8 @@ corner_adaptive_high_feature_global_kd: 800
 corner_adaptive_high_feature_max_keep: 400
 
 # AdaptiveBudget: 残差预算调节
-#   target_build_ms / target_solve_ms 越小，Residual 删得越狠。
-#   隧道实时性不足时可设 target_build_ms=6.5、target_solve_ms=20；若精度下降，把 tolerance 放宽到 0.3 并升高 min_*_residuals。
-adaptive_budget_enable: true
+#   final4: 完全关闭 adaptive budget，由智能残差选择控制质量
+adaptive_budget_enable: false
 adaptive_budget_target_build_ms: 8.0
 adaptive_budget_target_solve_ms: 25.0
 adaptive_budget_tolerance: 0.2

@@ -1054,30 +1054,12 @@ void Estimator::Estimate(std::list<LidarFrame>& lidarFrameList,
     v.reserve(2000);
   }
 
-  // 动态 thres_dist 和 plan_weight_tan (iteration_005 隧道优化)
-  // 当全局匹配率下降时扩大搜索范围，打破漂移恶性循环
+  // 恢复原版固定参数 (禁用 iteration_005 的动态机制)
+  // 动态搜索半径在隧道场景下可能导致恶性循环：
+  // 位姿偏差 → 特征减少 → 扩大搜索 → 错误匹配 → 偏差加剧
   if(windowSize == SLIDEWINDOWSIZE) {
-    // 动态搜索半径: 根据上一帧的全局匹配情况调整
-    double base_thres_dist = 1.0;
-    if (last_avg_global_kd_ < 100.0 && last_avg_global_kd_ > 0) {
-      // 线性扩展: avg_global_kd=100 时 1.0m, avg_global_kd=20 时 4.0m
-      double scale = 1.0 + 3.0 * (100.0 - last_avg_global_kd_) / 80.0;
-      scale = std::min(scale, 4.0);
-      dynamic_thres_dist_ = base_thres_dist * scale;
-    } else {
-      dynamic_thres_dist_ = base_thres_dist;
-    }
-    thres_dist = dynamic_thres_dist_;
-
-    // 动态面点权重: 当角点严重不足时增强面点约束
-    // 隧道场景下面点丰富，可以提供更多约束
-    if (last_avg_global_kd_ < 50.0) {
-      plan_weight_tan = 0.01;  // 低特征时增强 (原0.0003)
-    } else if (last_avg_global_kd_ < 100.0) {
-      plan_weight_tan = 0.003; // 中等特征时轻微增强
-    } else {
-      plan_weight_tan = 0.0003; // 正常情况
-    }
+    plan_weight_tan = 0.0003;  // 原版固定值
+    thres_dist = 1.0;          // 原版固定值
   } else {
     plan_weight_tan = 0.0;
     thres_dist = 25.0;

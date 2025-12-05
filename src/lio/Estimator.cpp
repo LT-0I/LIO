@@ -967,44 +967,55 @@ void Estimator::Estimate(std::list<LidarFrame>& lidarFrameList,
     std::vector<std::vector<ceres::CostFunction *>> edgesLine(windowSize);
     std::vector<std::vector<ceres::CostFunction *>> edgesPlan(windowSize);
     std::vector<std::vector<ceres::CostFunction *>> edgesNon(windowSize);
-    std::thread threads[3];
+    
+    // === 多帧并行优化：同时处理所有帧的所有特征类型 ===
+    // windowSize=2 时，6个线程同时运行（2帧 × 3特征类型）
+    const int totalThreads = windowSize * 3;
+    std::vector<std::thread> threads(totalThreads);
+    std::vector<Eigen::Matrix4d> transforms(windowSize);  // 每帧独立的变换矩阵
+    
+    // 预计算所有帧的变换矩阵
     for(int f=0; f<windowSize; ++f) {
       auto frame_curr = lidarFrameList.begin();
       std::advance(frame_curr, f);
-      transformTobeMapped = Eigen::Matrix4d::Identity();
-      transformTobeMapped.topLeftCorner(3,3) = frame_curr->Q * exRbl;
-      transformTobeMapped.topRightCorner(3,1) = frame_curr->Q * exPbl + frame_curr->P;
-
-      threads[0] = std::thread(&Estimator::processPointToLine, this,
+      transforms[f] = Eigen::Matrix4d::Identity();
+      transforms[f].topLeftCorner(3,3) = frame_curr->Q * exRbl;
+      transforms[f].topRightCorner(3,1) = frame_curr->Q * exPbl + frame_curr->P;
+    }
+    
+    // 同时启动所有线程（多帧并行）
+    for(int f=0; f<windowSize; ++f) {
+      threads[f*3 + 0] = std::thread(&Estimator::processPointToLine, this,
                                std::ref(edgesLine[f]),
                                std::ref(vLineFeatures[f]),
                                std::ref(laserCloudCornerStack[f]),
                                std::ref(laserCloudCornerFromLocal),
                                std::ref(kdtreeCornerFromLocal),
                                std::ref(exTlb),
-                               std::ref(transformTobeMapped));
+                               std::ref(transforms[f]));
 
-      threads[1] = std::thread(&Estimator::processPointToPlanVec, this,
+      threads[f*3 + 1] = std::thread(&Estimator::processPointToPlanVec, this,
                                std::ref(edgesPlan[f]),
                                std::ref(vPlanFeatures[f]),
                                std::ref(laserCloudSurfStack[f]),
                                std::ref(laserCloudSurfFromLocal),
                                std::ref(kdtreeSurfFromLocal),
                                std::ref(exTlb),
-                               std::ref(transformTobeMapped));
+                               std::ref(transforms[f]));
 
-      threads[2] = std::thread(&Estimator::processNonFeatureICP, this,
+      threads[f*3 + 2] = std::thread(&Estimator::processNonFeatureICP, this,
                                std::ref(edgesNon[f]),
                                std::ref(vNonFeatures[f]),
                                std::ref(laserCloudNonFeatureStack[f]),
                                std::ref(laserCloudNonFeatureFromLocal),
                                std::ref(kdtreeNonFeatureFromLocal),
                                std::ref(exTlb),
-                               std::ref(transformTobeMapped));
-
-      threads[0].join();
-      threads[1].join();
-      threads[2].join();
+                               std::ref(transforms[f]));
+    }
+    
+    // 等待所有线程完成
+    for(int i=0; i<totalThreads; ++i) {
+      threads[i].join();
     }
 
     int cntSurf = 0;
@@ -1180,7 +1191,10 @@ void Estimator::Estimate(std::list<LidarFrame>& lidarFrameList,
       edgesLine[f].clear();
       edgesPlan[f].clear();
       edgesNon[f].clear();
-      threads[0] = std::thread(&Estimator::processPointToLine, this,
+      
+      // 边缘化阶段的并行处理
+      std::thread marg_threads[3];
+      marg_threads[0] = std::thread(&Estimator::processPointToLine, this,
                                std::ref(edgesLine[f]),
                                std::ref(vLineFeatures[f]),
                                std::ref(laserCloudCornerStack[f]),
@@ -1189,7 +1203,7 @@ void Estimator::Estimate(std::list<LidarFrame>& lidarFrameList,
                                std::ref(exTlb),
                                std::ref(transformTobeMapped));
 
-      threads[1] = std::thread(&Estimator::processPointToPlanVec, this,
+      marg_threads[1] = std::thread(&Estimator::processPointToPlanVec, this,
                                std::ref(edgesPlan[f]),
                                std::ref(vPlanFeatures[f]),
                                std::ref(laserCloudSurfStack[f]),
@@ -1198,7 +1212,7 @@ void Estimator::Estimate(std::list<LidarFrame>& lidarFrameList,
                                std::ref(exTlb),
                                std::ref(transformTobeMapped));
 
-      threads[2] = std::thread(&Estimator::processNonFeatureICP, this,
+      marg_threads[2] = std::thread(&Estimator::processNonFeatureICP, this,
                                std::ref(edgesNon[f]),
                                std::ref(vNonFeatures[f]),
                                std::ref(laserCloudNonFeatureStack[f]),
@@ -1207,9 +1221,9 @@ void Estimator::Estimate(std::list<LidarFrame>& lidarFrameList,
                                std::ref(exTlb),
                                std::ref(transformTobeMapped));      
                       
-      threads[0].join();
-      threads[1].join();
-      threads[2].join();
+      marg_threads[0].join();
+      marg_threads[1].join();
+      marg_threads[2].join();
       int cntFtu = 0;
       for (auto &e : edgesLine[f]) {
         if(vLineFeatures[f][cntFtu].valid){

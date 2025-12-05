@@ -1,4 +1,5 @@
 #include "LidarFeatureExtractor/LidarFeatureExtractor.h"
+#include <omp.h>
 
 LidarFeatureExtractor::LidarFeatureExtractor(int n_scans,int NumCurvSize,float DistanceFaraway,int NumFlat,
                                              int PartNum,float FlatThreshold,float BreakCornerDis,float LidarNearestDis,float KdTreeCornerOutlierDis)

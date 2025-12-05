@@ -187,10 +187,10 @@ bool TryMAPInitialization() {
   para_quat[3] = 0;
 
 
-  ceres::LocalParameterization *quatParam = new ceres::QuaternionParameterization();
+  // Ceres 2.0+ 使用 Manifold API
   ceres::Problem problem_quat;
-  
-  problem_quat.AddParameterBlock(para_quat, 4, quatParam);
+  problem_quat.AddParameterBlock(para_quat, 4);
+  problem_quat.SetManifold(para_quat, new ceres::QuaternionManifold());
 
   problem_quat.AddResidualBlock(Cost_Initial_G::Create(average_acc),
                                 nullptr,

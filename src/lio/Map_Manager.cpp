@@ -1,5 +1,6 @@
 #include "MapManager/Map_Manager.h"
 #include <fstream>
+#include <omp.h>
 
 MAP_MANAGER::MAP_MANAGER(const float& filter_corner, const float& filter_surf){
   for (int i = 0; i < laserCloudNum; i++) {
@@ -180,53 +181,76 @@ void MAP_MANAGER::MapIncrement(const pcl::PointCloud<PointType>::Ptr& laserCloud
   laserCloudCornerFromMap->clear();
   laserCloudSurfFromMap->clear();
   laserCloudNonFeatureFromMap->clear();
+
+  // OpenMP 并行下采样和 KD-tree 构建
+  // 注意: VoxelGrid filter 不是线程安全的，每个线程需要独立实例
+  #pragma omp parallel
+  {
+    // 每个线程独立的 VoxelGrid filter
+    pcl::VoxelGrid<PointType> local_corner_filter;
+    pcl::VoxelGrid<PointType> local_surf_filter;
+    pcl::VoxelGrid<PointType> local_non_filter;
+    local_corner_filter.setLeafSize(0.4, 0.4, 0.4);
+    local_surf_filter.setLeafSize(0.4, 0.4, 0.4);
+    local_non_filter.setLeafSize(0.4, 0.4, 0.4);
+
+    #pragma omp for schedule(dynamic, 64) nowait
+    for(int i = 0; i < laserCloudNum; i++){
+      if(CornerChangeFlag[i]){
+        if(laserCloudCornerArray[i]->points.size() > 300){
+          local_corner_filter.setInputCloud(laserCloudCornerArray[i]);
+          laserCloudCornerArrayStack[i]->clear();
+          local_corner_filter.filter(*laserCloudCornerArrayStack[i]);
+          pcl::PointCloud<PointType>::Ptr tmp = laserCloudCornerArrayStack[i];
+          laserCloudCornerArrayStack[i] = laserCloudCornerArray[i];
+          laserCloudCornerArray[i] = tmp;
+        }
+        laserCloudCornerKdMap[i]->setInputCloud(laserCloudCornerArray[i]);
+      }
+
+      if(SurfChangeFlag[i]){
+        if(laserCloudSurfArray[i]->points.size() > 300){
+          local_surf_filter.setInputCloud(laserCloudSurfArray[i]);
+          laserCloudSurfArrayStack[i]->clear();
+          local_surf_filter.filter(*laserCloudSurfArrayStack[i]);
+          pcl::PointCloud<PointType>::Ptr tmp = laserCloudSurfArrayStack[i];
+          laserCloudSurfArrayStack[i] = laserCloudSurfArray[i];
+          laserCloudSurfArray[i] = tmp;
+        }
+        laserCloudSurfKdMap[i]->setInputCloud(laserCloudSurfArray[i]);
+      }
+
+      if(NonFeatureChangeFlag[i]){
+        if(laserCloudNonFeatureArray[i]->points.size() > 300){
+          local_non_filter.setInputCloud(laserCloudNonFeatureArray[i]);
+          laserCloudNonFeatureArrayStack[i]->clear();
+          local_non_filter.filter(*laserCloudNonFeatureArrayStack[i]);
+          pcl::PointCloud<PointType>::Ptr tmp = laserCloudNonFeatureArrayStack[i];
+          laserCloudNonFeatureArrayStack[i] = laserCloudNonFeatureArray[i];
+          laserCloudNonFeatureArray[i] = tmp;
+        }
+        laserCloudNonFeatureKdMap[i]->setInputCloud(laserCloudNonFeatureArray[i]);
+      }
+    }
+  } // end parallel
+
+  // 串行合并地图点云（有竞争，不能并行）
   for(int i = 0; i < laserCloudNum; i++){
     if(CornerChangeFlag[i]){
-      if(laserCloudCornerArray[i]->points.size() > 300){
-        downSizeFilterCorner.setInputCloud(laserCloudCornerArray[i]);
-        laserCloudCornerArrayStack[i]->clear();
-        downSizeFilterCorner.filter(*laserCloudCornerArrayStack[i]);
-        pcl::PointCloud<PointType>::Ptr tmp = laserCloudCornerArrayStack[i];
-        laserCloudCornerArrayStack[i] = laserCloudCornerArray[i];
-        laserCloudCornerArray[i] = tmp;
-      }
-
-      laserCloudCornerKdMap[i]->setInputCloud(laserCloudCornerArray[i]); 
       *laserCloudCornerFromMap += *laserCloudCornerKdMap[i]->getInputCloud();
     }
-
     if(SurfChangeFlag[i]){
-      if(laserCloudSurfArray[i]->points.size() > 300){
-        downSizeFilterSurf.setInputCloud(laserCloudSurfArray[i]);
-        laserCloudSurfArrayStack[i]->clear();
-        downSizeFilterSurf.filter(*laserCloudSurfArrayStack[i]);
-        pcl::PointCloud<PointType>::Ptr tmp = laserCloudSurfArrayStack[i];
-        laserCloudSurfArrayStack[i] = laserCloudSurfArray[i];
-        laserCloudSurfArray[i] = tmp;
-      }
-
-      laserCloudSurfKdMap[i]->setInputCloud(laserCloudSurfArray[i]);
       *laserCloudSurfFromMap += *laserCloudSurfKdMap[i]->getInputCloud();
     }
-
     if(NonFeatureChangeFlag[i]){
-      if(laserCloudNonFeatureArray[i]->points.size() > 300){
-        downSizeFilterNonFeature.setInputCloud(laserCloudNonFeatureArray[i]);
-        laserCloudNonFeatureArrayStack[i]->clear();
-        downSizeFilterNonFeature.filter(*laserCloudNonFeatureArrayStack[i]);
-        pcl::PointCloud<PointType>::Ptr tmp = laserCloudNonFeatureArrayStack[i];
-        laserCloudNonFeatureArrayStack[i] = laserCloudNonFeatureArray[i];
-        laserCloudNonFeatureArray[i] = tmp;
-      }
-
-      laserCloudNonFeatureKdMap[i]->setInputCloud(laserCloudNonFeatureArray[i]);
       *laserCloudNonFeatureFromMap += *laserCloudNonFeatureKdMap[i]->getInputCloud();
     }
-      
   }
 
   t4 = clock();
   std::unique_lock<std::mutex> locker(mtx_MapManager);
+  // OpenMP 并行复制 KD-tree
+  #pragma omp parallel for schedule(static, 256)
   for(int i = 0; i < laserCloudNum; i++){
     CornerKdMap_copy[i] = *laserCloudCornerKdMap[i];
     SurfKdMap_copy[i] = *laserCloudSurfKdMap[i];

@@ -34,6 +34,12 @@ find_package(OpenCV 4.2.0 REQUIRED)
 find_package(SuiteSparse REQUIRED)
 find_package(OpenMP REQUIRED)
 
+# OpenMP 优化标志
+if(OpenMP_CXX_FOUND)
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${OpenMP_CXX_FLAGS}")
+    message(STATUS "OpenMP found, enabling parallel optimizations")
+endif()
+
 include_directories(include
         	    ${catkin_INCLUDE_DIRS}
 		    ${EIGEN3_INCLUDE_DIR}
@@ -57,7 +63,7 @@ add_executable (ScanRegistration
 		src/lio/LidarFeatureExtractor.cpp
         	src/segment/segment.cpp
         	src/segment/pointsCorrect.cpp)
-target_link_libraries(ScanRegistration ${catkin_LIBRARIES} ${PCL_LIBRARIES} ${OpenCV_LIBRARIES})
+target_link_libraries(ScanRegistration ${catkin_LIBRARIES} ${PCL_LIBRARIES} ${OpenCV_LIBRARIES} OpenMP::OpenMP_CXX)
 
 add_executable (PoseEstimation 
 		src/lio/PoseEstimation.cpp

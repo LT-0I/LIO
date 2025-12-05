@@ -10,9 +10,9 @@ from pathlib import Path
 import sys
 
 # 默认文件路径（可通过命令行参数覆盖）
-DEFAULT_TEST_TRAJ = '/home/orangepi/ws_livox/src/LIO/logs/odom_traj_20251204_143510.txt'
-DEFAULT_BASELINE_TRAJ = '/home/orangepi/ws_livox/optimization_memory/baseline_data/baseline_traj_20251204_010450.txt'
-DEFAULT_OUTPUT_CSV = '/home/orangepi/ws_livox/src/LIO/logs/aligned_with_velocity.csv'
+DEFAULT_TEST_TRAJ = '/home/orangepi/ws_livox/src/LIO/logs/OpiMM_3_2.txt'
+DEFAULT_BASELINE_TRAJ = '/home/orangepi/ws_livox/optimization_memory/baseline_data/nuchuihs627.txt'
+DEFAULT_OUTPUT_CSV = '/home/orangepi/ws_livox/src/LIO/logs/MMvsNUC.csv'
 
 def load_tum_trajectory(filepath):
     """加载 TUM 格式轨迹文件"""

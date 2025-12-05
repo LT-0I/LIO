@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """
 Record LIO-Livox odometry to TUM format for EVO evaluation.
-增加实时性监控：帧间隔、处理延迟统计
+实时监控：帧间隔统计
 
 Usage:
   1. Start recording: python3 record_odom.py
-  2. Run LIO-Livox and play bag
+  2. Run LIO-Livox and play bag: rosbag play xxx.bag
   3. Ctrl+C to stop and save
   
 Output: odom_traj_YYYYMMDD_HHMMSS.txt (TUM format)
@@ -31,12 +31,9 @@ class OdomRecorder:
         self.poses = []
         self.count = 0
         
-        # === 新增: 延迟和帧间隔统计 ===
-        self.latencies = []        # 处理延迟 (系统时间 - 消息时间戳)
-        self.intervals = []        # 帧间隔 (系统时间)
+        # === 帧间隔统计 ===
+        self.intervals = []        # 帧间隔 (系统时间差)
         self.last_wall_time = None
-        self.first_msg_time = None
-        self.last_msg_time = None
         
         # Subscribe to odometry
         self.sub = rospy.Subscriber('/livox_odometry_mapped', Odometry, self.odom_callback)
@@ -50,18 +47,11 @@ class OdomRecorder:
         # Extract timestamp
         t = msg.header.stamp.to_sec()
         
-        # === 新增: 计算延迟和帧间隔 ===
-        latency_ms = (wall_time - t) * 1000.0
-        self.latencies.append(latency_ms)
-        
+        # === 计算帧间隔 ===
         if self.last_wall_time is not None:
             interval_ms = (wall_time - self.last_wall_time) * 1000.0
             self.intervals.append(interval_ms)
         self.last_wall_time = wall_time
-        
-        if self.first_msg_time is None:
-            self.first_msg_time = t
-        self.last_msg_time = t
         
         # Extract position
         x = msg.pose.pose.position.x
@@ -79,11 +69,11 @@ class OdomRecorder:
         
         self.count += 1
         # 每100帧显示实时统计
-        if self.count % 100 == 0:
-            recent_lat = self.latencies[-100:] if len(self.latencies) >= 100 else self.latencies
-            avg_lat = sum(recent_lat) / len(recent_lat)
-            max_lat = max(recent_lat)
-            rospy.loginfo(f"[OdomRecorder] 帧:{self.count} | 延迟: 平均={avg_lat:.0f}ms 最大={max_lat:.0f}ms")
+        if self.count % 100 == 0 and self.intervals:
+            recent = self.intervals[-100:] if len(self.intervals) >= 100 else self.intervals
+            avg_ms = sum(recent) / len(recent)
+            max_ms = max(recent)
+            rospy.loginfo(f"[OdomRecorder] 帧:{self.count} | 帧间隔: 平均={avg_ms:.0f}ms 最大={max_ms:.0f}ms ({1000/avg_ms:.1f}Hz)")
     
     def save(self):
         if not self.poses:
@@ -100,7 +90,7 @@ class OdomRecorder:
         self.print_stats()
     
     def print_stats(self):
-        """打印延迟和帧间隔统计"""
+        """打印帧间隔统计"""
         if len(self.poses) < 2:
             return
         
@@ -114,54 +104,32 @@ class OdomRecorder:
         print("=" * 65)
         print(f"  总帧数:     {len(self.poses)}")
         print(f"  Bag时长:    {bag_duration:.1f}s")
-        print(f"  平均帧率:   {len(self.poses)/bag_duration:.1f} Hz")
-        
-        # 延迟统计
-        if self.latencies:
-            lat = sorted(self.latencies)
-            n = len(lat)
-            print(f"\n📈 处理延迟 (系统时间 - 消息时间戳):")
-            print(f"  最小:   {lat[0]:8.1f} ms")
-            print(f"  P50:    {lat[int(n*0.50)]:8.1f} ms")
-            print(f"  平均:   {sum(lat)/n:8.1f} ms")
-            print(f"  P95:    {lat[int(n*0.95)]:8.1f} ms")
-            print(f"  P99:    {lat[int(n*0.99)]:8.1f} ms")
-            print(f"  最大:   {lat[-1]:8.1f} ms")
-            
-            # 检测累积延迟
-            if n > 200:
-                first_100 = sum(self.latencies[:100]) / 100
-                last_100 = sum(self.latencies[-100:]) / 100
-                drift = last_100 - first_100
-                print(f"\n  开始延迟: {first_100:.1f}ms → 结束延迟: {last_100:.1f}ms")
-                if drift > 50:
-                    print(f"  ⚠️  累积延迟: +{drift:.1f}ms (算法跟不上输入)")
-                else:
-                    print(f"  ✅ 无明显累积延迟")
+        print(f"  平均帧率:   {len(self.poses)/bag_duration:.1f} Hz (bag内)")
         
         # 帧间隔统计
         if self.intervals:
             intv = sorted(self.intervals)
             n = len(intv)
-            print(f"\n📊 帧间隔 (实际处理间隔):")
+            avg_ms = sum(intv) / n
+            print(f"\n📊 帧间隔 (实际处理速度):")
             print(f"  最小:   {intv[0]:8.1f} ms")
             print(f"  P50:    {intv[int(n*0.50)]:8.1f} ms")
-            print(f"  平均:   {sum(intv)/n:8.1f} ms ({1000/(sum(intv)/n):.1f} Hz)")
+            print(f"  平均:   {avg_ms:8.1f} ms ({1000/avg_ms:.1f} Hz)")
             print(f"  P95:    {intv[int(n*0.95)]:8.1f} ms")
+            print(f"  P99:    {intv[int(n*0.99)]:8.1f} ms")
             print(f"  最大:   {intv[-1]:8.1f} ms")
-        
-        # 实时性评估
-        if self.latencies:
-            p95 = sorted(self.latencies)[int(len(self.latencies)*0.95)]
-            print(f"\n🎯 实时性评估:")
+            
+            # 实时性评估（目标：100ms/帧 = 10Hz）
+            p95 = intv[int(n*0.95)]
+            print(f"\n🎯 实时性评估 (目标: <100ms/帧):")
             if p95 < 100:
-                print(f"  ✅ 优秀 - P95延迟={p95:.1f}ms < 100ms")
+                print(f"  ✅ 优秀 - P95帧间隔={p95:.1f}ms < 100ms")
             elif p95 < 150:
-                print(f"  ⚠️  良好 - P95延迟={p95:.1f}ms < 150ms")
+                print(f"  ⚠️  良好 - P95帧间隔={p95:.1f}ms < 150ms")
             elif p95 < 200:
-                print(f"  ⚠️  及格 - P95延迟={p95:.1f}ms < 200ms")
+                print(f"  ⚠️  及格 - P95帧间隔={p95:.1f}ms < 200ms")
             else:
-                print(f"  ❌ 不合格 - P95延迟={p95:.1f}ms >= 200ms")
+                print(f"  ❌ 不合格 - P95帧间隔={p95:.1f}ms >= 200ms")
         
         print("=" * 65 + "\n")
 

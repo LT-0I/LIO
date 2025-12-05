@@ -5,6 +5,35 @@
 #include <pcl/point_types.h>
 #include <pcl/filters/voxel_grid.h>
 #include <future>
+#include <atomic>
+#include <memory>
+
+// =========================================================
+// MapSnapshot - 零拷贝地图快照，供 Estimator 只读访问
+// =========================================================
+struct MapSnapshot {
+    typedef pcl::PointXYZINormal PointType;
+    static const int N = 4851;
+    
+    // KD-tree 指针（只读引用）
+    pcl::KdTreeFLANN<PointType>* cornerKdMap[N];
+    pcl::KdTreeFLANN<PointType>* surfKdMap[N];
+    pcl::KdTreeFLANN<PointType>* nonFeatureKdMap[N];
+    
+    // 点云指针（只读引用）
+    pcl::PointCloud<PointType>* cornerPointMap[N];
+    pcl::PointCloud<PointType>* surfPointMap[N];
+    pcl::PointCloud<PointType>* nonFeaturePointMap[N];
+    
+    // 地图中心坐标
+    int cenWidth = 10;
+    int cenHeight = 5;
+    int cenDepth = 10;
+    
+    // 快照有效标志
+    bool valid = false;
+};
+
 class MAP_MANAGER{
     typedef pcl::PointXYZINormal PointType;
 public:
@@ -104,6 +133,23 @@ public:
     pcl::PointCloud<PointType> laserCloudSurf_for_match[4851];
     pcl::PointCloud<PointType> laserCloudCorner_for_match[4851];
     pcl::PointCloud<PointType> laserCloudNonFeature_for_match[4851];
+    
+    // =========================================================
+    // 双缓冲 MapSnapshot 接口（零拷贝）
+    // =========================================================
+    
+    /** \brief 获取当前可读取的地图快照（零拷贝，只读）
+     * \return 指向 published 快照的 const 指针
+     */
+    const MapSnapshot* AcquireSnapshot();
+    
+    /** \brief 释放快照（当前实现无需显式释放）
+     */
+    void ReleaseSnapshot();
+    
+    /** \brief 发布新的快照（由 MapIncrement 内部调用）
+     */
+    void PublishSnapshot();
 
 private:
     int laserCloudCenWidth = 10;
@@ -154,6 +200,25 @@ private:
 
     int currentUpdatePos = 0;
     int estimatorPos = 0;
+    
+    // === 增量拷贝优化 ===
+    bool cubeNeedSync[laserCloudNum] = {false};  // 脏标记：哪些 cube 需要同步
+    int syncedCubeCount = 0;  // 统计：每帧同步的 cube 数量
+    
+    // === 双缓冲 MapSnapshot ===
+    static const int kSnapshotBufferCount = 2;
+    MapSnapshot snapshots_[kSnapshotBufferCount];  // 双缓冲快照
+    std::atomic<int> publishedIdx_{0};   // 当前可读取的快照索引
+    std::atomic<int> stagingIdx_{1};     // 当前写入的快照索引
+    std::atomic<int> snapshotRefCount_{0};  // 引用计数（防止覆盖正在读取的快照）
+    
+    // 双缓冲底层存储（独立的 KD-tree 和点云）
+    pcl::KdTreeFLANN<PointType> kdCornerBuffer_[kSnapshotBufferCount][laserCloudNum];
+    pcl::KdTreeFLANN<PointType> kdSurfBuffer_[kSnapshotBufferCount][laserCloudNum];
+    pcl::KdTreeFLANN<PointType> kdNonBuffer_[kSnapshotBufferCount][laserCloudNum];
+    pcl::PointCloud<PointType> pcCornerBuffer_[kSnapshotBufferCount][laserCloudNum];
+    pcl::PointCloud<PointType> pcSurfBuffer_[kSnapshotBufferCount][laserCloudNum];
+    pcl::PointCloud<PointType> pcNonBuffer_[kSnapshotBufferCount][laserCloudNum];
 };
 
 #endif //LIO_LIVOX_MAP_MANAGER_H

@@ -90,13 +90,20 @@ void MAP_MANAGER::MapIncrement(const pcl::PointCloud<PointType>::Ptr& laserCloud
   clock_t t0,t1,t2,t3,t4,t5;
   t0 = clock();
   std::unique_lock<std::mutex> locker2(mtx_MapManager);
+  
+  // === 增量拷贝优化：只拷贝上一轮标记为脏的 cube ===
+  syncedCubeCount = 0;
   for(int i = 0; i < laserCloudNum; i++){
-    CornerKdMap_last[i] = *laserCloudCornerKdMap[i];
-    SurfKdMap_last[i] = *laserCloudSurfKdMap[i];
-    NonFeatureKdMap_last[i] = *laserCloudNonFeatureKdMap[i];
-    laserCloudSurf_for_match[i] = *laserCloudSurfArray[i];
-    laserCloudCorner_for_match[i] = *laserCloudCornerArray[i];
-    laserCloudNonFeature_for_match[i] = *laserCloudNonFeatureArray[i];
+    if(cubeNeedSync[i]){
+      CornerKdMap_last[i] = *laserCloudCornerKdMap[i];
+      SurfKdMap_last[i] = *laserCloudSurfKdMap[i];
+      NonFeatureKdMap_last[i] = *laserCloudNonFeatureKdMap[i];
+      laserCloudSurf_for_match[i] = *laserCloudSurfArray[i];
+      laserCloudCorner_for_match[i] = *laserCloudCornerArray[i];
+      laserCloudNonFeature_for_match[i] = *laserCloudNonFeatureArray[i];
+      cubeNeedSync[i] = false;  // 清除脏标记
+      syncedCubeCount++;
+    }
   }
 
   laserCloudCenWidth_last = laserCloudCenWidth;
@@ -196,6 +203,9 @@ void MAP_MANAGER::MapIncrement(const pcl::PointCloud<PointType>::Ptr& laserCloud
 
     #pragma omp for schedule(dynamic, 64) nowait
     for(int i = 0; i < laserCloudNum; i++){
+      // 任意 feature 类型变化，标记此 cube 需要下一帧同步
+      bool changed = CornerChangeFlag[i] || SurfChangeFlag[i] || NonFeatureChangeFlag[i];
+      
       if(CornerChangeFlag[i]){
         if(laserCloudCornerArray[i]->points.size() > 300){
           local_corner_filter.setInputCloud(laserCloudCornerArray[i]);
@@ -231,6 +241,11 @@ void MAP_MANAGER::MapIncrement(const pcl::PointCloud<PointType>::Ptr& laserCloud
         }
         laserCloudNonFeatureKdMap[i]->setInputCloud(laserCloudNonFeatureArray[i]);
       }
+      
+      // 标记脏 cube，下一帧增量拷贝时使用
+      if(changed){
+        cubeNeedSync[i] = true;
+      }
     }
   } // end parallel
 
@@ -248,16 +263,44 @@ void MAP_MANAGER::MapIncrement(const pcl::PointCloud<PointType>::Ptr& laserCloud
   }
 
   t4 = clock();
-  std::unique_lock<std::mutex> locker(mtx_MapManager);
-  // OpenMP 并行复制 KD-tree
-  #pragma omp parallel for schedule(static, 256)
+  
+  // === 双缓冲：写入 staging 缓冲区 ===
+  int staging = stagingIdx_.load();
+  
+  // OpenMP 并行增量复制到 staging 缓冲区（只复制变化的 cube）
+  #pragma omp parallel for schedule(dynamic, 64)
   for(int i = 0; i < laserCloudNum; i++){
-    CornerKdMap_copy[i] = *laserCloudCornerKdMap[i];
-    SurfKdMap_copy[i] = *laserCloudSurfKdMap[i];
-    NonFeatureKdMap_copy[i] = *laserCloudNonFeatureKdMap[i];
+    if(CornerChangeFlag[i] || SurfChangeFlag[i] || NonFeatureChangeFlag[i]){
+      // 复制 KD-tree 到 staging 缓冲区
+      kdCornerBuffer_[staging][i] = *laserCloudCornerKdMap[i];
+      kdSurfBuffer_[staging][i] = *laserCloudSurfKdMap[i];
+      kdNonBuffer_[staging][i] = *laserCloudNonFeatureKdMap[i];
+      
+      // 复制点云到 staging 缓冲区
+      pcCornerBuffer_[staging][i] = *laserCloudCornerArray[i];
+      pcSurfBuffer_[staging][i] = *laserCloudSurfArray[i];
+      pcNonBuffer_[staging][i] = *laserCloudNonFeatureArray[i];
+    }
   }
-
-  locker.unlock();
+  
+  // 更新 staging 快照的指针（指向 staging 缓冲区）
+  MapSnapshot& snap = snapshots_[staging];
+  for(int i = 0; i < laserCloudNum; i++){
+    snap.cornerKdMap[i] = &kdCornerBuffer_[staging][i];
+    snap.surfKdMap[i] = &kdSurfBuffer_[staging][i];
+    snap.nonFeatureKdMap[i] = &kdNonBuffer_[staging][i];
+    snap.cornerPointMap[i] = &pcCornerBuffer_[staging][i];
+    snap.surfPointMap[i] = &pcSurfBuffer_[staging][i];
+    snap.nonFeaturePointMap[i] = &pcNonBuffer_[staging][i];
+  }
+  snap.cenWidth = laserCloudCenWidth;
+  snap.cenHeight = laserCloudCenHeight;
+  snap.cenDepth = laserCloudCenDepth;
+  snap.valid = true;
+  
+  // 发布快照（原子交换索引）
+  PublishSnapshot();
+  
   t5 = clock();
 
   currentUpdatePos ++;
@@ -631,4 +674,41 @@ size_t MAP_MANAGER::FindUsedNonFeatureMap(const PointType *p,int a,int b, int c)
     }
 
     return cubeInd; 
+}
+
+// =========================================================
+// 双缓冲 MapSnapshot 实现
+// =========================================================
+
+const MapSnapshot* MAP_MANAGER::AcquireSnapshot() {
+    // 增加引用计数
+    snapshotRefCount_.fetch_add(1);
+    
+    // 返回当前 published 快照的指针
+    int idx = publishedIdx_.load();
+    if (!snapshots_[idx].valid) {
+        // 第一帧还没有有效快照，返回 nullptr
+        snapshotRefCount_.fetch_sub(1);
+        return nullptr;
+    }
+    return &snapshots_[idx];
+}
+
+void MAP_MANAGER::ReleaseSnapshot() {
+    // 减少引用计数
+    snapshotRefCount_.fetch_sub(1);
+}
+
+void MAP_MANAGER::PublishSnapshot() {
+    // 等待所有读取者释放快照
+    // 注意：这里使用自旋等待，实际中读取很快完成
+    while (snapshotRefCount_.load() > 0) {
+        std::this_thread::yield();
+    }
+    
+    // 原子交换 staging 和 published 索引
+    int oldPublished = publishedIdx_.load();
+    int oldStaging = stagingIdx_.load();
+    publishedIdx_.store(oldStaging);
+    stagingIdx_.store(oldPublished);
 }

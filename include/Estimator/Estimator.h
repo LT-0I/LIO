@@ -16,42 +16,10 @@
 #include <queue>
 #include <iterator>
 #include <future>
-#include <memory>
 #include "MapManager/Map_Manager.h"
 #include "utils/ceresfunc.h"
 #include "IMUIntegrator/IMUIntegrator.h"
 #include <chrono>
-
-struct CornerAdaptiveConfig{
-	bool enable = true;
-	double default_eigen_ratio = 3.0;
-	double low_feature_eigen_ratio = 2.5;
-	int low_feature_global_kd = 80;
-	int low_feature_min_keep = 200;
-	int high_feature_global_kd = 800;
-	int high_feature_max_keep = 400;
-};
-
-struct ResidualBudgetConfig{
-	bool enable = false;
-	double target_residual_build_ms = 8.0;
-	double target_ceres_solve_ms = 25.0;
-	double tolerance_ratio = 0.2;
-	double adjust_ratio = 0.15;
-	int min_corner_residuals = 200;
-	int min_surf_residuals = 450;
-	int min_non_residuals = 250;
-};
-
-struct EstimatorResidualConfig{
-	int max_corner_residuals = 500;
-	int max_surf_residuals = 750;
-	int max_non_residuals = 350;
-	double feature_error_threshold = 1e-5;
-	bool log_feature_counts = false;
-	CornerAdaptiveConfig adaptive_corner;
-	ResidualBudgetConfig adaptive_budget;
-};
 
 class Estimator{
 	typedef pcl::PointXYZINormal PointType;
@@ -86,12 +54,10 @@ public:
 		Eigen::Vector3d lineP2;
 		double error;
 		bool valid;
-		bool from_global;
 		FeatureLine(Eigen::Vector3d  po, Eigen::Vector3d  p1, Eigen::Vector3d  p2)
 						:pointOri(std::move(po)), lineP1(std::move(p1)), lineP2(std::move(p2)){
 			valid = false;
 			error = 0;
-			from_global = false;
 		}
 		double ComputeError(const Eigen::Matrix4d& pose){
 			Eigen::Vector3d P_to_Map = pose.topLeftCorner(3,3) * pointOri + pose.topRightCorner(3,1);
@@ -174,25 +140,10 @@ public:
 		}
 	};
 
-	struct FeatureBuildStats{
-		int points_total = 0;
-		int global_region_skipped = 0;
-		int global_kd_success = 0;
-		int global_eigen_pass = 0;
-		int global_eigen_fail = 0;
-		int local_kd_success = 0;
-		int local_eigen_pass = 0;
-		int local_eigen_fail = 0;
-	};
-
 public:
 	/** \brief constructor of Estimator
 	*/
-	Estimator(const float& filter_corner,
-	          const float& filter_surf,
-	          const MapManagerConfig& map_config = MapManagerConfig(),
-	          const EstimatorResidualConfig& residual_config = EstimatorResidualConfig(),
-	          bool log_module_timing = false);
+	Estimator(const float& filter_corner, const float& filter_surf);
 
 	~Estimator();
 
@@ -204,20 +155,19 @@ public:
 	* \param[in] edges: store costfunctions
 	* \param[in] m4d: lidar pose, represented by matrix 4X4
 	*/
-	void processPointToLine(std::vector<std::unique_ptr<ceres::CostFunction>>& edges,
+	void processPointToLine(std::vector<ceres::CostFunction *>& edges,
 							std::vector<FeatureLine>& vLineFeatures,
 							const pcl::PointCloud<PointType>::Ptr& laserCloudCorner,
 							const pcl::PointCloud<PointType>::Ptr& laserCloudCornerMap,
 							const pcl::KdTreeFLANN<PointType>::Ptr& kdtree,
 							const Eigen::Matrix4d& exTlb,
-							const Eigen::Matrix4d& m4d,
-							struct FeatureBuildStats* stats = nullptr);
+							const Eigen::Matrix4d& m4d);
 
 	/** \brief construct Plan feature Ceres Costfunctions
 	* \param[in] edges: store costfunctions
 	* \param[in] m4d: lidar pose, represented by matrix 4X4
 	*/
-	void processPointToPlan(std::vector<std::unique_ptr<ceres::CostFunction>>& edges,
+	void processPointToPlan(std::vector<ceres::CostFunction *>& edges,
 							std::vector<FeaturePlan>& vPlanFeatures,
 							const pcl::PointCloud<PointType>::Ptr& laserCloudSurf,
 							const pcl::PointCloud<PointType>::Ptr& laserCloudSurfMap,
@@ -225,7 +175,7 @@ public:
 							const Eigen::Matrix4d& exTlb,
 							const Eigen::Matrix4d& m4d);
 
-	void processPointToPlanVec(std::vector<std::unique_ptr<ceres::CostFunction>>& edges,
+	void processPointToPlanVec(std::vector<ceres::CostFunction *>& edges,
 							   std::vector<FeaturePlanVec>& vPlanFeatures,
 							   const pcl::PointCloud<PointType>::Ptr& laserCloudSurf,
 							   const pcl::PointCloud<PointType>::Ptr& laserCloudSurfMap,
@@ -233,7 +183,7 @@ public:
 							   const Eigen::Matrix4d& exTlb,
 							   const Eigen::Matrix4d& m4d);
 				
-	void processNonFeatureICP(std::vector<std::unique_ptr<ceres::CostFunction>>& edges,
+	void processNonFeatureICP(std::vector<ceres::CostFunction *>& edges,
 							  std::vector<FeatureNon>& vNonFeatures,
 							  const pcl::PointCloud<PointType>::Ptr& laserCloudNonFeature,
 							  const pcl::PointCloud<PointType>::Ptr& laserCloudNonFeatureLocal,
@@ -280,7 +230,6 @@ public:
 						   const Eigen::Matrix4d& transformTobeMapped);
 
 private:
-	EstimatorResidualConfig residual_config_;
 	/** \brief store map points */
 	MAP_MANAGER* map_manager;
 
@@ -311,13 +260,13 @@ private:
 	std::mutex mtx_Map;
 	std::thread threadMap;
 
-	const pcl::KdTreeFLANN<PointType>* CornerKdMap[10000];
-	const pcl::KdTreeFLANN<PointType>* SurfKdMap[10000];
-	const pcl::KdTreeFLANN<PointType>* NonFeatureKdMap[10000];
+	pcl::KdTreeFLANN<PointType> CornerKdMap[10000];
+	pcl::KdTreeFLANN<PointType> SurfKdMap[10000];
+	pcl::KdTreeFLANN<PointType> NonFeatureKdMap[10000];
 
-	const pcl::PointCloud<PointType>* GlobalSurfMap[10000];
-	const pcl::PointCloud<PointType>* GlobalCornerMap[10000];
-	const pcl::PointCloud<PointType>* GlobalNonFeatureMap[10000];
+	pcl::PointCloud<PointType> GlobalSurfMap[10000];
+	pcl::PointCloud<PointType> GlobalCornerMap[10000];
+	pcl::PointCloud<PointType> GlobalNonFeatureMap[10000];
 
 	int laserCenWidth_last = 10;
 	int laserCenHeight_last = 5;
@@ -328,32 +277,12 @@ private:
 	pcl::PointCloud<PointType>::Ptr localCornerMap[localMapWindowSize];
 	pcl::PointCloud<PointType>::Ptr localSurfMap[localMapWindowSize];
 	pcl::PointCloud<PointType>::Ptr localNonFeatureMap[localMapWindowSize];
-	long localFrameId = 0;
-	long localFrameStamp[localMapWindowSize];
-	static const int localMapHistoryFrames = 40;
-	double localBoxForward = 40.0;
-	double localBoxBackward = 8.0;
-	double localBoxSide = 8.0;
-	double localBoxVertical = 6.0;
 
 	int map_update_ID = 0;
 
 	int map_skip_frame = 2; //every map_skip_frame frame update map
 	double plan_weight_tan = 0.0;
 	double thres_dist = 1.0;
-	double corner_eigen_ratio_ = 3.0;
-	bool log_module_timing_ = false;
-	int runtime_corner_limit_ = 0;
-	int runtime_surf_limit_ = 0;
-	int runtime_non_limit_ = 0;
-	double last_residual_build_ms_ = 0.0;
-	double last_ceres_solve_ms_ = 0.0;
-	int local_corner_max_points_ = 0;
-	int local_surf_max_points_ = 0;
-	int local_non_max_points_ = 0;
-
-	void UpdateResidualLimits(double build_ms, double solve_ms);
-	void EnforceLocalMapLimit(pcl::PointCloud<PointType>::Ptr& cloud, int max_points);
 };
 
 #endif //LIO_LIVOX_ESTIMATOR_H

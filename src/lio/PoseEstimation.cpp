@@ -6,7 +6,6 @@ bool LidarIMUInited = false;
 boost::shared_ptr<std::list<Estimator::LidarFrame>> lidarFrameList;
 pcl::PointCloud<PointType>::Ptr laserCloudFullRes;
 Estimator* estimator;
-bool log_module_timing = false;
 
 ros::Publisher pubLaserOdometry;
 ros::Publisher pubLaserOdometryPath;
@@ -188,11 +187,10 @@ bool TryMAPInitialization() {
   para_quat[3] = 0;
 
 
-  ceres::Manifold *quatManifold = new ceres::QuaternionManifold();
+  ceres::LocalParameterization *quatParam = new ceres::QuaternionParameterization();
   ceres::Problem problem_quat;
   
-  problem_quat.AddParameterBlock(para_quat, 4);
-  problem_quat.SetManifold(para_quat, quatManifold);
+  problem_quat.AddParameterBlock(para_quat, 4, quatParam);
 
   problem_quat.AddResidualBlock(Cost_Initial_G::Create(average_acc),
                                 nullptr,
@@ -413,13 +411,7 @@ void process(){
 	    	if(!LidarIMUInited) {
 	    		// if get IMU msg successfully, use gyro integration to update delta_Rl
 			    lidarFrame.imuIntegrator.PushIMUMsg(vimuMsg);
-			    if(log_module_timing){
-			      ROS_INFO("[Timing] IMU_GyroIntegration start %.6f", ros::Time::now().toSec());
-			    }
 			    lidarFrame.imuIntegrator.GyroIntegration(time_last_lidar);
-			    if(log_module_timing){
-			      ROS_INFO("[Timing] IMU_GyroIntegration end   %.6f", ros::Time::now().toSec());
-			    }
 			    delta_Rb = lidarFrame.imuIntegrator.GetDeltaQ().toRotationMatrix();
 			    delta_Rl = exTlb.topLeftCorner(3, 3) * delta_Rb * exTlb.topLeftCorner(3, 3).transpose();
 
@@ -434,9 +426,6 @@ void process(){
 		    }else{
 			    // if get IMU msg successfully, use pre-integration to update delta lidar pose
 			    lidarFrame.imuIntegrator.PushIMUMsg(vimuMsg);
-			    if(log_module_timing){
-			      ROS_INFO("[Timing] IMU_PreIntegration start %.6f", ros::Time::now().toSec());
-			    }
 			    lidarFrame.imuIntegrator.PreIntegration(lidarFrameList->back().timeStamp, lidarFrameList->back().bg, lidarFrameList->back().ba);
 
 			    const Eigen::Vector3d& Pwbpre = lidarFrameList->back().P;
@@ -464,9 +453,6 @@ void process(){
 			    delta_tl = Qwlpre.conjugate() * (Pwl - Pwlpre);
 			    delta_Rb = dQ.toRotationMatrix();
 			    delta_tb = dP;
-			    if(log_module_timing){
-			      ROS_INFO("[Timing] IMU_PreIntegration end   %.6f", ros::Time::now().toSec());
-			    }
 
 			    lidarFrameList->push_back(lidarFrame);
 			    lidarFrameList->pop_front();
@@ -487,13 +473,8 @@ void process(){
 	    	}
 	    }
 
-	    if(log_module_timing){
-	      ROS_INFO("[Timing] RemoveDistortion start %.6f", ros::Time::now().toSec());
-	    }
+	    // remove lidar distortion
 	    RemoveLidarDistortion(laserCloudFullRes, delta_Rl, delta_tl);
-	    if(log_module_timing){
-	      ROS_INFO("[Timing] RemoveDistortion end   %.6f", ros::Time::now().toSec());
-	    }
 
       // optimize current lidar pose with IMU
       estimator->EstimateLidarPose(*lidar_list, exTlb, GravityVector, debugInfo);
@@ -567,11 +548,13 @@ void process(){
 			    }
 
 			    if (!LidarIMUInited && lidarFrameList->size() == WINDOWSIZE && lidarFrameList->front().timeStamp >= startTime){
+            std::cout<<"**************Start MAP Initialization!!!******************"<<std::endl;
 				    if(TryMAPInitialization()){
               LidarIMUInited = true;
 					    pushCount = 0;
               startTime = 0;
 				    }
+            std::cout<<"**************Finish MAP Initialization!!!******************"<<std::endl;
 			    }
 
 		    }
@@ -625,125 +608,8 @@ int main(int argc, char** argv)
 
   tfBroadcaster = new tf::TransformBroadcaster();
 
-  int map_width = 21;
-  int map_height = 11;
-  int map_depth = 21;
-  int map_local_window = 60;
-  int map_skip_frame = 2;
-  int max_corner_residuals = 500;
-  int max_surf_residuals = 750;
-  int max_non_residuals = 350;
-  double feature_error_threshold = 1e-5;
-  bool log_feature_counts = false;
-  bool corner_adaptive_enable = true;
-  double corner_adaptive_default_eigen_ratio = 3.0;
-  double corner_adaptive_low_feature_eigen_ratio = 2.5;
-  int corner_adaptive_low_feature_global_kd = 80;
-  int corner_adaptive_low_feature_min_keep = 200;
-  int corner_adaptive_high_feature_global_kd = 800;
-  int corner_adaptive_high_feature_max_keep = 400;
-  double local_box_forward = 40.0;
-  double local_box_backward = 8.0;
-  double local_box_side = 8.0;
-  double local_box_vertical = 6.0;
-  int local_corner_max_points = 180000;
-  int local_surf_max_points = 240000;
-  int local_non_max_points = 120000;
-  double map_forward_range = 0.0;
-  double map_backward_range = 0.0;
-  double map_side_range = 0.0;
-  double map_vertical_range = 0.0;
-  bool enable_cube_prune = true;
-  bool adaptive_budget_enable = false;
-  double adaptive_budget_target_build_ms = 8.0;
-  double adaptive_budget_target_solve_ms = 25.0;
-  double adaptive_budget_tolerance = 0.2;
-  double adaptive_budget_adjust_ratio = 0.15;
-  int adaptive_budget_min_corner_residuals = 200;
-  int adaptive_budget_min_surf_residuals = 450;
-  int adaptive_budget_min_non_residuals = 250;
-  ros::param::param("~map_width", map_width, map_width);
-  ros::param::param("~map_height", map_height, map_height);
-  ros::param::param("~map_depth", map_depth, map_depth);
-  ros::param::param("~map_local_window", map_local_window, map_local_window);
-  ros::param::param("~map_skip_frame", map_skip_frame, map_skip_frame);
-  ros::param::param("~map_forward_range", map_forward_range, map_forward_range);
-  ros::param::param("~map_backward_range", map_backward_range, map_backward_range);
-  ros::param::param("~map_side_range", map_side_range, map_side_range);
-  ros::param::param("~map_vertical_range", map_vertical_range, map_vertical_range);
-  ros::param::param("~enable_cube_prune", enable_cube_prune, enable_cube_prune);
-  ros::param::param("~local_box_forward", local_box_forward, local_box_forward);
-  ros::param::param("~local_box_backward", local_box_backward, local_box_backward);
-  ros::param::param("~local_box_side", local_box_side, local_box_side);
-  ros::param::param("~local_box_vertical", local_box_vertical, local_box_vertical);
-  ros::param::param("~local_corner_max_points", local_corner_max_points, local_corner_max_points);
-  ros::param::param("~local_surf_max_points", local_surf_max_points, local_surf_max_points);
-  ros::param::param("~local_non_max_points", local_non_max_points, local_non_max_points);
-  ros::param::param("~max_corner_residuals", max_corner_residuals, max_corner_residuals);
-  ros::param::param("~max_surf_residuals", max_surf_residuals, max_surf_residuals);
-  ros::param::param("~max_non_residuals", max_non_residuals, max_non_residuals);
-  ros::param::param("~feature_error_threshold", feature_error_threshold, feature_error_threshold);
-  ros::param::param("~log_feature_counts", log_feature_counts, log_feature_counts);
-  ros::param::param("~log_module_timing", log_module_timing, log_module_timing);
-  ros::param::param("~corner_adaptive_enable", corner_adaptive_enable, corner_adaptive_enable);
-  ros::param::param("~corner_adaptive_default_eigen_ratio", corner_adaptive_default_eigen_ratio, corner_adaptive_default_eigen_ratio);
-  ros::param::param("~corner_adaptive_low_feature_eigen_ratio", corner_adaptive_low_feature_eigen_ratio, corner_adaptive_low_feature_eigen_ratio);
-  ros::param::param("~corner_adaptive_low_feature_global_kd", corner_adaptive_low_feature_global_kd, corner_adaptive_low_feature_global_kd);
-  ros::param::param("~corner_adaptive_low_feature_min_keep", corner_adaptive_low_feature_min_keep, corner_adaptive_low_feature_min_keep);
-  ros::param::param("~corner_adaptive_high_feature_global_kd", corner_adaptive_high_feature_global_kd, corner_adaptive_high_feature_global_kd);
-  ros::param::param("~corner_adaptive_high_feature_max_keep", corner_adaptive_high_feature_max_keep, corner_adaptive_high_feature_max_keep);
-  ros::param::param("~adaptive_budget_enable", adaptive_budget_enable, adaptive_budget_enable);
-  ros::param::param("~adaptive_budget_target_build_ms", adaptive_budget_target_build_ms, adaptive_budget_target_build_ms);
-  ros::param::param("~adaptive_budget_target_solve_ms", adaptive_budget_target_solve_ms, adaptive_budget_target_solve_ms);
-  ros::param::param("~adaptive_budget_tolerance", adaptive_budget_tolerance, adaptive_budget_tolerance);
-  ros::param::param("~adaptive_budget_adjust_ratio", adaptive_budget_adjust_ratio, adaptive_budget_adjust_ratio);
-  ros::param::param("~adaptive_budget_min_corner_residuals", adaptive_budget_min_corner_residuals, adaptive_budget_min_corner_residuals);
-  ros::param::param("~adaptive_budget_min_surf_residuals", adaptive_budget_min_surf_residuals, adaptive_budget_min_surf_residuals);
-  ros::param::param("~adaptive_budget_min_non_residuals", adaptive_budget_min_non_residuals, adaptive_budget_min_non_residuals);
-
-  MapManagerConfig map_config;
-  map_config.width = map_width;
-  map_config.height = map_height;
-  map_config.depth = map_depth;
-  map_config.local_window = map_local_window;
-  map_config.map_skip_frame = map_skip_frame;
-  map_config.map_forward_range = map_forward_range;
-  map_config.map_backward_range = map_backward_range;
-  map_config.map_side_range = map_side_range;
-  map_config.map_vertical_range = map_vertical_range;
-  map_config.enable_cube_prune = enable_cube_prune;
-  map_config.local_box_forward = local_box_forward;
-  map_config.local_box_backward = local_box_backward;
-  map_config.local_box_side = local_box_side;
-  map_config.local_box_vertical = local_box_vertical;
-  map_config.local_corner_max_points = local_corner_max_points;
-  map_config.local_surf_max_points = local_surf_max_points;
-  map_config.local_non_max_points = local_non_max_points;
-
-  EstimatorResidualConfig residual_config;
-  residual_config.max_corner_residuals = max_corner_residuals;
-  residual_config.max_surf_residuals = max_surf_residuals;
-  residual_config.max_non_residuals = max_non_residuals;
-  residual_config.feature_error_threshold = feature_error_threshold;
-  residual_config.log_feature_counts = log_feature_counts;
-  residual_config.adaptive_corner.enable = corner_adaptive_enable;
-  residual_config.adaptive_corner.default_eigen_ratio = corner_adaptive_default_eigen_ratio;
-  residual_config.adaptive_corner.low_feature_eigen_ratio = corner_adaptive_low_feature_eigen_ratio;
-  residual_config.adaptive_corner.low_feature_global_kd = corner_adaptive_low_feature_global_kd;
-  residual_config.adaptive_corner.low_feature_min_keep = corner_adaptive_low_feature_min_keep;
-  residual_config.adaptive_corner.high_feature_global_kd = corner_adaptive_high_feature_global_kd;
-  residual_config.adaptive_corner.high_feature_max_keep = corner_adaptive_high_feature_max_keep;
-  residual_config.adaptive_budget.enable = adaptive_budget_enable;
-  residual_config.adaptive_budget.target_residual_build_ms = adaptive_budget_target_build_ms;
-  residual_config.adaptive_budget.target_ceres_solve_ms = adaptive_budget_target_solve_ms;
-  residual_config.adaptive_budget.tolerance_ratio = adaptive_budget_tolerance;
-  residual_config.adaptive_budget.adjust_ratio = adaptive_budget_adjust_ratio;
-  residual_config.adaptive_budget.min_corner_residuals = adaptive_budget_min_corner_residuals;
-  residual_config.adaptive_budget.min_surf_residuals = adaptive_budget_min_surf_residuals;
-  residual_config.adaptive_budget.min_non_residuals = adaptive_budget_min_non_residuals;
-
   laserCloudFullRes.reset(new pcl::PointCloud<PointType>);
-  estimator = new Estimator(filter_parameter_corner, filter_parameter_surf, map_config, residual_config, log_module_timing);
+  estimator = new Estimator(filter_parameter_corner, filter_parameter_surf);
 	lidarFrameList.reset(new std::list<Estimator::LidarFrame>);
 
   std::thread thread_process{process};
@@ -751,3 +617,4 @@ int main(int argc, char** argv)
 
   return 0;
 }
+

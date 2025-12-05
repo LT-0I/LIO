@@ -27,9 +27,15 @@ Estimator::Estimator(const float& filter_corner, const float& filter_surf){
   laserCloudSurfForMap.reset(new pcl::PointCloud<PointType>);
   laserCloudNonFeatureForMap.reset(new pcl::PointCloud<PointType>);
   transformForMap.setIdentity();
+#if USE_NANOFLANN
+  kdtreeCornerFromLocal = std::make_shared<nanoflann_pcl::KdTreeNano<PointType>>();
+  kdtreeSurfFromLocal = std::make_shared<nanoflann_pcl::KdTreeNano<PointType>>();
+  kdtreeNonFeatureFromLocal = std::make_shared<nanoflann_pcl::KdTreeNano<PointType>>();
+#else
   kdtreeCornerFromLocal.reset(new pcl::KdTreeFLANN<PointType>);
   kdtreeSurfFromLocal.reset(new pcl::KdTreeFLANN<PointType>);
   kdtreeNonFeatureFromLocal.reset(new pcl::KdTreeFLANN<PointType>);
+#endif
 
   for(int i = 0; i < localMapWindowSize; i++){
     localCornerMap[i].reset(new pcl::PointCloud<PointType>);
@@ -106,7 +112,7 @@ void Estimator::processPointToLine(std::vector<ceres::CostFunction *>& edges,
                                    std::vector<FeatureLine>& vLineFeatures,
                                    const pcl::PointCloud<PointType>::Ptr& laserCloudCorner,
                                    const pcl::PointCloud<PointType>::Ptr& laserCloudCornerLocal,
-                                   const pcl::KdTreeFLANN<PointType>::Ptr& kdtreeLocal,
+                                   const LocalKdTreePtr& kdtreeLocal,
                                    const Eigen::Matrix4d& exTlb,
                                    const Eigen::Matrix4d& m4d){
 
@@ -159,9 +165,13 @@ void Estimator::processPointToLine(std::vector<ceres::CostFunction *>& edges,
 
       bool found_global = false;
       if(GlobalCornerMap[id].points.size() > 100) {
+#if USE_NANOFLANN
         CornerKdMap[id].nearestKSearch(_pointSel, 5, _pointSearchInd, _pointSearchSqDis);
+#else
+        CornerKdMap[id].nearestKSearch(_pointSel, 5, _pointSearchInd, _pointSearchSqDis);
+#endif
         
-        if (_pointSearchSqDis[4] < thres_dist) {
+        if (_pointSearchSqDis.size() >= 5 && _pointSearchSqDis[4] < thres_dist) {
           float cx = 0, cy = 0, cz = 0;
           for (int j = 0; j < 5; j++) {
             cx += GlobalCornerMap[id].points[_pointSearchInd[j]].x;
@@ -263,7 +273,7 @@ void Estimator::processPointToPlan(std::vector<ceres::CostFunction *>& edges,
                                    std::vector<FeaturePlan>& vPlanFeatures,
                                    const pcl::PointCloud<PointType>::Ptr& laserCloudSurf,
                                    const pcl::PointCloud<PointType>::Ptr& laserCloudSurfLocal,
-                                   const pcl::KdTreeFLANN<PointType>::Ptr& kdtreeLocal,
+                                   const LocalKdTreePtr& kdtreeLocal,
                                    const Eigen::Matrix4d& exTlb,
                                    const Eigen::Matrix4d& m4d){
   Eigen::Matrix4d Tbl = Eigen::Matrix4d::Identity();
@@ -314,7 +324,7 @@ void Estimator::processPointToPlan(std::vector<ceres::CostFunction *>& edges,
     if(GlobalSurfMap[id].points.size() > 50) {
       SurfKdMap[id].nearestKSearch(_pointSel, 5, _pointSearchInd, _pointSearchSqDis);
 
-      if (_pointSearchSqDis[4] < 1.0) {
+      if (_pointSearchSqDis.size() >= 5 && _pointSearchSqDis[4] < 1.0) {
         debug_num1 ++;
         for (int j = 0; j < 5; j++) {
           _matA0(j, 0) = GlobalSurfMap[id].points[_pointSearchInd[j]].x;
@@ -429,7 +439,7 @@ void Estimator::processPointToPlanVec(std::vector<ceres::CostFunction *>& edges,
                                    std::vector<FeaturePlanVec>& vPlanFeatures,
                                    const pcl::PointCloud<PointType>::Ptr& laserCloudSurf,
                                    const pcl::PointCloud<PointType>::Ptr& laserCloudSurfLocal,
-                                   const pcl::KdTreeFLANN<PointType>::Ptr& kdtreeLocal,
+                                   const LocalKdTreePtr& kdtreeLocal,
                                    const Eigen::Matrix4d& exTlb,
                                    const Eigen::Matrix4d& m4d){
   Eigen::Matrix4d Tbl = Eigen::Matrix4d::Identity();
@@ -485,7 +495,7 @@ void Estimator::processPointToPlanVec(std::vector<ceres::CostFunction *>& edges,
       if(GlobalSurfMap[id].points.size() > 50) {
         SurfKdMap[id].nearestKSearch(_pointSel, 5, _pointSearchInd, _pointSearchSqDis);
 
-        if (_pointSearchSqDis[4] < thres_dist) {
+        if (_pointSearchSqDis.size() >= 5 && _pointSearchSqDis[4] < thres_dist) {
           for (int j = 0; j < 5; j++) {
             _matA0(j, 0) = GlobalSurfMap[id].points[_pointSearchInd[j]].x;
             _matA0(j, 1) = GlobalSurfMap[id].points[_pointSearchInd[j]].y;
@@ -592,7 +602,7 @@ void Estimator::processNonFeatureICP(std::vector<ceres::CostFunction *>& edges,
                                      std::vector<FeatureNon>& vNonFeatures,
                                      const pcl::PointCloud<PointType>::Ptr& laserCloudNonFeature,
                                      const pcl::PointCloud<PointType>::Ptr& laserCloudNonFeatureLocal,
-                                     const pcl::KdTreeFLANN<PointType>::Ptr& kdtreeLocal,
+                                     const LocalKdTreePtr& kdtreeLocal,
                                      const Eigen::Matrix4d& exTlb,
                                      const Eigen::Matrix4d& m4d){
   Eigen::Matrix4d Tbl = Eigen::Matrix4d::Identity();
@@ -650,7 +660,7 @@ void Estimator::processNonFeatureICP(std::vector<ceres::CostFunction *>& edges,
       bool found_global = false;
       if(GlobalNonFeatureMap[id].points.size() > 100) {
         NonFeatureKdMap[id].nearestKSearch(_pointSel, 5, _pointSearchInd, _pointSearchSqDis);
-        if (_pointSearchSqDis[4] < thres_dist) {
+        if (_pointSearchSqDis.size() >= 5 && _pointSearchSqDis[4] < thres_dist) {
           for (int j = 0; j < 5; j++) {
             _matA0(j, 0) = GlobalNonFeatureMap[id].points[_pointSearchInd[j]].x;
             _matA0(j, 1) = GlobalNonFeatureMap[id].points[_pointSearchInd[j]].y;
@@ -1140,6 +1150,16 @@ void Estimator::Estimate(std::list<LidarFrame>& lidarFrameList,
     options.max_num_iterations = 10;
     options.minimizer_progress_to_stdout = false;
     options.num_threads = 8;  // RK3588: 4大核 + 4小核
+    
+    // === Ceres 性能优化 ===
+    // 1. 放宽收敛容差（加快早停，但保持精度）
+    options.function_tolerance = 1e-5;   // 默认 1e-6
+    options.parameter_tolerance = 1e-6;  // 默认 1e-8
+    // 2. 使用 LAPACK 加速稠密运算（如果可用）
+    options.dense_linear_algebra_library_type = ceres::LAPACK;
+    // 3. Dogleg 子空间方法（更快收敛）
+    options.dogleg_type = ceres::SUBSPACE_DOGLEG;
+    
     ceres::Solver::Summary summary;
     ceres::Solve(options, &problem, &summary);
 

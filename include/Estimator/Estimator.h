@@ -21,8 +21,25 @@
 #include "IMUIntegrator/IMUIntegrator.h"
 #include <chrono>
 
+// 启用 nanoflann 替换 PCL KdTreeFLANN
+#define USE_NANOFLANN 1
+
+#if USE_NANOFLANN
+#include "nanoflann/nanoflann_pcl_adaptor.hpp"
+#endif
+
 class Estimator{
 	typedef pcl::PointXYZINormal PointType;
+	
+#if USE_NANOFLANN
+	// nanoflann KD-tree 类型别名
+	using LocalKdTreeType = nanoflann_pcl::KdTreeNano<PointType>;
+	using LocalKdTreePtr = std::shared_ptr<LocalKdTreeType>;
+#else
+	using LocalKdTreeType = pcl::KdTreeFLANN<PointType>;
+	using LocalKdTreePtr = pcl::KdTreeFLANN<PointType>::Ptr;
+#endif
+
 public:
 	/** \brief slide window size */
 	static const int SLIDEWINDOWSIZE = 2;
@@ -159,7 +176,7 @@ public:
 							std::vector<FeatureLine>& vLineFeatures,
 							const pcl::PointCloud<PointType>::Ptr& laserCloudCorner,
 							const pcl::PointCloud<PointType>::Ptr& laserCloudCornerMap,
-							const pcl::KdTreeFLANN<PointType>::Ptr& kdtree,
+							const LocalKdTreePtr& kdtree,
 							const Eigen::Matrix4d& exTlb,
 							const Eigen::Matrix4d& m4d);
 
@@ -171,7 +188,7 @@ public:
 							std::vector<FeaturePlan>& vPlanFeatures,
 							const pcl::PointCloud<PointType>::Ptr& laserCloudSurf,
 							const pcl::PointCloud<PointType>::Ptr& laserCloudSurfMap,
-							const pcl::KdTreeFLANN<PointType>::Ptr& kdtree,
+							const LocalKdTreePtr& kdtree,
 							const Eigen::Matrix4d& exTlb,
 							const Eigen::Matrix4d& m4d);
 
@@ -179,7 +196,7 @@ public:
 							   std::vector<FeaturePlanVec>& vPlanFeatures,
 							   const pcl::PointCloud<PointType>::Ptr& laserCloudSurf,
 							   const pcl::PointCloud<PointType>::Ptr& laserCloudSurfMap,
-							   const pcl::KdTreeFLANN<PointType>::Ptr& kdtree,
+							   const LocalKdTreePtr& kdtree,
 							   const Eigen::Matrix4d& exTlb,
 							   const Eigen::Matrix4d& m4d);
 				
@@ -187,7 +204,7 @@ public:
 							  std::vector<FeatureNon>& vNonFeatures,
 							  const pcl::PointCloud<PointType>::Ptr& laserCloudNonFeature,
 							  const pcl::PointCloud<PointType>::Ptr& laserCloudNonFeatureLocal,
-							  const pcl::KdTreeFLANN<PointType>::Ptr& kdtreeLocal,
+							  const LocalKdTreePtr& kdtreeLocal,
 							  const Eigen::Matrix4d& exTlb,
 							  const Eigen::Matrix4d& m4d);
 
@@ -251,15 +268,23 @@ private:
 	std::vector<pcl::PointCloud<PointType>::Ptr> laserCloudCornerStack;
 	std::vector<pcl::PointCloud<PointType>::Ptr> laserCloudSurfStack;
 	std::vector<pcl::PointCloud<PointType>::Ptr> laserCloudNonFeatureStack;
+#if USE_NANOFLANN
+	// 使用 nanoflann 替换 PCL KdTreeFLANN（局部地图）
+	std::shared_ptr<nanoflann_pcl::KdTreeNano<PointType>> kdtreeCornerFromLocal;
+	std::shared_ptr<nanoflann_pcl::KdTreeNano<PointType>> kdtreeSurfFromLocal;
+	std::shared_ptr<nanoflann_pcl::KdTreeNano<PointType>> kdtreeNonFeatureFromLocal;
+#else
 	pcl::KdTreeFLANN<PointType>::Ptr kdtreeCornerFromLocal;
 	pcl::KdTreeFLANN<PointType>::Ptr kdtreeSurfFromLocal;
 	pcl::KdTreeFLANN<PointType>::Ptr kdtreeNonFeatureFromLocal;
+#endif
 	pcl::VoxelGrid<PointType> downSizeFilterCorner;
 	pcl::VoxelGrid<PointType> downSizeFilterSurf;
 	pcl::VoxelGrid<PointType> downSizeFilterNonFeature;
 	std::mutex mtx_Map;
 	std::thread threadMap;
 
+	// 全局地图 KD-tree 保持使用 PCL（数组太大，nanoflann 会导致栈溢出）
 	pcl::KdTreeFLANN<PointType> CornerKdMap[10000];
 	pcl::KdTreeFLANN<PointType> SurfKdMap[10000];
 	pcl::KdTreeFLANN<PointType> NonFeatureKdMap[10000];

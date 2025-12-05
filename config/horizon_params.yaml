@@ -36,10 +36,10 @@ local_surf_max_points: 240000
 local_non_max_points: 120000
 
 # Estimator: 残差与特征阈值
-#   隧道角点稀少：max_corner_residuals=350~400、max_surf_residuals=600~700、max_non_residuals=250~300；
+#   提高限制以匹配NUC原版行为（NUC无限制，实测surf约2300+）
 #   若 `Ceres solve` >25 ms，可整体按 0.8 比例下调。feature_error_threshold=0 维持严格筛选，除非需要调试残差。
 max_corner_residuals: 500
-max_surf_residuals: 750
+max_surf_residuals: 3000
 max_non_residuals: 350
 feature_error_threshold: 0
 

@@ -75,7 +75,7 @@ bool LidarFeatureExtractor::plane_judge(const std::vector<PointType>& point_list
   _matA1(2, 1) = a23;
   _matA1(2, 2) = a33;
 
-  Eigen::JacobiSVD<Eigen::Matrix3d> svd(_matA1, Eigen::ComputeThinU | Eigen::ComputeThinV);
+  Eigen::JacobiSVD<Eigen::Matrix3d> svd(_matA1, Eigen::ComputeFullU | Eigen::ComputeFullV);
   _matD1 = svd.singularValues();
   _matV1 = svd.matrixU();
   if (_matD1(0, 0) < plane_threshold * _matD1(1, 0)) {

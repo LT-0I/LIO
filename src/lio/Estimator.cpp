@@ -623,7 +623,7 @@ void Estimator::processPointToPlanVec(std::vector<std::unique_ptr<ceres::CostFun
           Eigen::Vector3d point_proj = Eigen::Vector3d(_pointSel.x,_pointSel.y,_pointSel.z) - (dist * omega);
           Eigen::Vector3d e1(1, 0, 0);
           Eigen::Matrix3d J = e1 * omega.transpose();
-          Eigen::JacobiSVD<Eigen::Matrix3d> svd(J, Eigen::ComputeThinU | Eigen::ComputeThinV);
+          Eigen::JacobiSVD<Eigen::Matrix3d> svd(J, Eigen::ComputeFullU | Eigen::ComputeFullV);
           Eigen::Matrix3d R_svd = svd.matrixV() * svd.matrixU().transpose();
           Eigen::Matrix3d info = (1.0/IMUIntegrator::lidar_m) * Eigen::Matrix3d::Identity();
           info(1, 1) *= plan_weight_tan;
@@ -687,7 +687,7 @@ void Estimator::processPointToPlanVec(std::vector<std::unique_ptr<ceres::CostFun
         Eigen::Vector3d point_proj = Eigen::Vector3d(_pointSel.x,_pointSel.y,_pointSel.z) - (dist * omega);
         Eigen::Vector3d e1(1, 0, 0);
         Eigen::Matrix3d J = e1 * omega.transpose();
-        Eigen::JacobiSVD<Eigen::Matrix3d> svd(J, Eigen::ComputeThinU | Eigen::ComputeThinV);
+        Eigen::JacobiSVD<Eigen::Matrix3d> svd(J, Eigen::ComputeFullU | Eigen::ComputeFullV);
         Eigen::Matrix3d R_svd = svd.matrixV() * svd.matrixU().transpose();
         Eigen::Matrix3d info = (1.0/IMUIntegrator::lidar_m) * Eigen::Matrix3d::Identity();
         info(1, 1) *= plan_weight_tan;

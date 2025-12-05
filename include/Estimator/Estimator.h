@@ -330,7 +330,7 @@ private:
 	pcl::PointCloud<PointType>::Ptr localNonFeatureMap[localMapWindowSize];
 	long localFrameId = 0;
 	long localFrameStamp[localMapWindowSize];
-	static const int localMapHistoryFrames = 20;
+	static const int localMapHistoryFrames = 40;
 	double localBoxForward = 40.0;
 	double localBoxBackward = 8.0;
 	double localBoxSide = 8.0;

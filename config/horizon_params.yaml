@@ -23,24 +23,24 @@ enable_cube_prune: true
 #   控制局部 KD-tree 采样范围。
 #   隧道：local_box_forward=35~40、local_box_backward=8~10、local_box_side=4~5、local_box_vertical=3~4。
 #   宽场景：side/vertical 可放到 8~10 以保更多特征。若残差数量 < 50% 阈值，再小步增加这些尺寸。
-local_box_forward: 40.0
-local_box_backward: 8.0
-local_box_side: 8.0
-local_box_vertical: 6.0
+local_box_forward: 80
+local_box_backward: 20
+local_box_side: 15
+local_box_vertical: 10
 
 # MapManager: 局部 KD-Tree 点数上限
 #   长隧道若 RSS 超 400 MB：corner 降到 150k，surf 200k，non 100k；仍高则继续 120k/160k/80k。
 #   若轨迹 jitter 或 Ceres 发散，按 20k 步长回调到默认 180k/240k/120k。
-local_corner_max_points: 180000
-local_surf_max_points: 240000
-local_non_max_points: 120000
+local_corner_max_points: 300000
+local_surf_max_points: 400000
+local_non_max_points: 200000
 
 # Estimator: 残差与特征阈值
 #   提高限制以匹配NUC原版行为（NUC无限制，实测surf约2300+）
 #   若 `Ceres solve` >25 ms，可整体按 0.8 比例下调。feature_error_threshold=0 维持严格筛选，除非需要调试残差。
-max_corner_residuals: 500
-max_surf_residuals: 3000
-max_non_residuals: 350
+max_corner_residuals: 99999
+max_surf_residuals: 99999
+max_non_residuals: 99999
 feature_error_threshold: 0
 
 # Diagnostics: 日志与统计控制
@@ -52,7 +52,7 @@ log_module_timing: false
 # CornerAdaptive: 特征保留策略
 #   低纹理场景：corner_adaptive_low_feature_global_kd=60、low_feature_min_keep=220 防止角点耗尽。
 #   若局部漂移，corner_adaptive_high_feature_max_keep 可升至 450~480，default_eigen_ratio 调小到 2.8 可更宽松收角点。
-corner_adaptive_enable: true
+corner_adaptive_enable: false
 corner_adaptive_default_eigen_ratio: 3.0
 corner_adaptive_low_feature_eigen_ratio: 2.5
 corner_adaptive_low_feature_global_kd: 80
@@ -63,7 +63,8 @@ corner_adaptive_high_feature_max_keep: 400
 # AdaptiveBudget: 残差预算调节
 #   target_build_ms / target_solve_ms 越小，Residual 删得越狠。
 #   隧道实时性不足时可设 target_build_ms=6.5、target_solve_ms=20；若精度下降，把 tolerance 放宽到 0.3 并升高 min_*_residuals。
-adaptive_budget_enable: true
+#   设为false禁用，与NUC原版行为一致
+adaptive_budget_enable: false
 adaptive_budget_target_build_ms: 8.0
 adaptive_budget_target_solve_ms: 25.0
 adaptive_budget_tolerance: 0.2

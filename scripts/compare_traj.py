@@ -17,7 +17,7 @@ from datetime import datetime
 SCRIPT_DIR = Path(__file__).parent
 LOGS_DIR = SCRIPT_DIR.parent / 'logs'
 BASELINE_DIR = Path('/home/orangepi/ws_livox/optimization_memory/baseline_data')
-BASELINE_TRAJ = BASELINE_DIR / 'benchmark_traj_20251204_000419.txt'
+BASELINE_TRAJ = BASELINE_DIR / 'baseline_traj_20251204_010450.txt'
 
 def find_newest_traj():
     """Find newest odom_traj_*.txt in logs/"""

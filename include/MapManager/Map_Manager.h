@@ -11,9 +11,12 @@
 // =========================================================
 // MapSnapshot - 零拷贝地图快照，供 Estimator 只读访问
 // =========================================================
+// 前向声明 CUBE 数量（需要在 MapSnapshot 之前定义）
+static const int CUBE_NUM = 17 * 17 * 9;  // 2601
+
 struct MapSnapshot {
     typedef pcl::PointXYZINormal PointType;
-    static const int N = 4851;
+    static const int N = CUBE_NUM;
     
     // KD-tree 指针（只读引用）
     pcl::KdTreeFLANN<PointType>* cornerKdMap[N];
@@ -26,9 +29,9 @@ struct MapSnapshot {
     pcl::PointCloud<PointType>* nonFeaturePointMap[N];
     
     // 地图中心坐标
-    int cenWidth = 10;
-    int cenHeight = 5;
-    int cenDepth = 10;
+    int cenWidth = 8;   // 17/2
+    int cenHeight = 4;  // 9/2
+    int cenDepth = 8;   // 17/2
     
     // 快照有效标志
     bool valid = false;
@@ -130,9 +133,9 @@ public:
     int get_laserCloudCenDepth_last(){
       return laserCloudCenDepth_last;
     }
-    pcl::PointCloud<PointType> laserCloudSurf_for_match[4851];
-    pcl::PointCloud<PointType> laserCloudCorner_for_match[4851];
-    pcl::PointCloud<PointType> laserCloudNonFeature_for_match[4851];
+    pcl::PointCloud<PointType> laserCloudSurf_for_match[CUBE_NUM];
+    pcl::PointCloud<PointType> laserCloudCorner_for_match[CUBE_NUM];
+    pcl::PointCloud<PointType> laserCloudNonFeature_for_match[CUBE_NUM];
     
     // =========================================================
     // 双缓冲 MapSnapshot 接口（零拷贝）
@@ -152,21 +155,21 @@ public:
     void PublishSnapshot();
 
 private:
-    int laserCloudCenWidth = 8;   // (17-1)/2
-    int laserCloudCenHeight = 4;  // (9-1)/2
-    int laserCloudCenDepth = 8;   // (17-1)/2
+    int laserCloudCenWidth = 8;   // 17/2
+    int laserCloudCenHeight = 4;  // 9/2
+    int laserCloudCenDepth = 8;   // 17/2
 
     int laserCloudCenWidth_last = 8;
     int laserCloudCenHeight_last = 4;
     int laserCloudCenDepth_last = 8;
 
-    // CUBE 网格大小（可调整以换取速度，减小会缩小地图覆盖范围）
-    // 原始: 21×21×11 = 4851, 覆盖 1050m×1050m×550m
-    // 优化: 17×17×9 = 2601, 覆盖 850m×850m×450m
+    // CUBE 网格大小（优化版：减少 46%）
     static const int laserCloudWidth = 17;
     static const int laserCloudHeight = 9;
     static const int laserCloudDepth = 17;
     static const int laserCloudNum = laserCloudWidth * laserCloudHeight * laserCloudDepth;//2601
+    // 地图滚动边界（原值8，需要配合 CUBE 大小调整）
+    static const int cubeMargin = 3;
     pcl::PointCloud<PointType>::Ptr laserCloudCornerArray[laserCloudNum];
     pcl::PointCloud<PointType>::Ptr laserCloudSurfArray[laserCloudNum];
     pcl::PointCloud<PointType>::Ptr laserCloudNonFeatureArray[laserCloudNum];

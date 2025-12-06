@@ -10,9 +10,9 @@
         <param name="IMU_Mode" type="int" value="2" />
         
         <!-- ========== 体素滤波参数（值越大点越少，越快但可能精度下降）========== -->
-        <param name="filter_parameter_corner" type="double" value="0.2" />
-        <param name="filter_parameter_surf" type="double" value="0.4" />
-        <param name="filter_parameter_nonfeature" type="double" value="0.4" />
+        <param name="filter_parameter_corner" type="double" value="0.3" />
+        <param name="filter_parameter_surf" type="double" value="0.5" />
+        <param name="filter_parameter_nonfeature" type="double" value="0.5" />
         
         <!-- ========== 优化参数（调小可加速，但可能影响精度）========== -->
         <!-- 外层迭代次数（默认4，稳定后；初始化阶段自动-1）-->

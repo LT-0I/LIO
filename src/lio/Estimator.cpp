@@ -865,12 +865,13 @@ void Estimator::Estimate(std::list<LidarFrame>& lidarFrameList,
   kdtreeNonFeatureFromLocal->setInputCloud(laserCloudNonFeatureFromLocal);
 
   // === 零拷贝 MapSnapshot：获取快照指针（无需持锁）===
+  const int cubeNum = CUBE_NUM;  // 使用全局常量
   const MapSnapshot* snapshot = map_manager->AcquireSnapshot();
   if (!snapshot) {
     // 第一帧还没有有效快照，使用旧方法
     std::unique_lock<std::mutex> locker3(map_manager->mtx_MapManager);
     #pragma omp parallel for schedule(static, 256)
-    for(int i = 0; i < 4851; i++){
+    for(int i = 0; i < cubeNum; i++){
       CornerKdMap[i] = map_manager->getCornerKdMap(i);
       SurfKdMap[i] = map_manager->getSurfKdMap(i);
       NonFeatureKdMap[i] = map_manager->getNonFeatureKdMap(i);
@@ -885,14 +886,14 @@ void Estimator::Estimate(std::list<LidarFrame>& lidarFrameList,
   } else {
     // 使用 MapSnapshot（无锁并行拷贝）
     #pragma omp parallel for schedule(static, 256)
-  for(int i = 0; i < 4851; i++){
+    for(int i = 0; i < cubeNum; i++){
       CornerKdMap[i] = *(snapshot->cornerKdMap[i]);
       SurfKdMap[i] = *(snapshot->surfKdMap[i]);
       NonFeatureKdMap[i] = *(snapshot->nonFeatureKdMap[i]);
       GlobalSurfMap[i] = *(snapshot->surfPointMap[i]);
       GlobalCornerMap[i] = *(snapshot->cornerPointMap[i]);
       GlobalNonFeatureMap[i] = *(snapshot->nonFeaturePointMap[i]);
-  }
+    }
     laserCenWidth_last = snapshot->cenWidth;
     laserCenHeight_last = snapshot->cenHeight;
     laserCenDepth_last = snapshot->cenDepth;

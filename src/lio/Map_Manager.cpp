@@ -329,7 +329,7 @@ void MAP_MANAGER::MapMove(const Eigen::Matrix4d& transformTobeMapped){
   if (transformTobeMapped_t.y() + 25.0 < 0) centerCubeJ--;
   if (transformTobeMapped_t.z() + 25.0 < 0) centerCubeK--;
 
-  while (centerCubeI < 8) {
+  while (centerCubeI < cubeMargin) {
     for (int j = 0; j < laserCloudWidth; j++) {
       for (int k = 0; k < laserCloudHeight; k++) {
         int i = laserCloudDepth - 1;
@@ -377,7 +377,7 @@ void MAP_MANAGER::MapMove(const Eigen::Matrix4d& transformTobeMapped){
     laserCloudCenDepth++;
   }
 
-  while (centerCubeI >= laserCloudDepth - 8) {
+  while (centerCubeI >= laserCloudDepth - cubeMargin) {
     for (int j = 0; j < laserCloudWidth; j++) {
       for (int k = 0; k < laserCloudHeight; k++) {
         int i = 0;
@@ -423,7 +423,7 @@ void MAP_MANAGER::MapMove(const Eigen::Matrix4d& transformTobeMapped){
     laserCloudCenDepth--;
   }
 
-  while (centerCubeJ < 8) {
+  while (centerCubeJ < cubeMargin) {
     for (int i = 0; i < laserCloudDepth; i++) {
       for (int k = 0; k < laserCloudHeight; k++) {
         int j = laserCloudWidth - 1;
@@ -468,7 +468,7 @@ void MAP_MANAGER::MapMove(const Eigen::Matrix4d& transformTobeMapped){
     laserCloudCenWidth++;
   }
 
-  while (centerCubeJ >= laserCloudWidth - 8) {
+  while (centerCubeJ >= laserCloudWidth - cubeMargin) {
     for (int i = 0; i < laserCloudDepth; i++) {
       for (int k = 0; k < laserCloudHeight; k++) {
         int j = 0;
@@ -513,7 +513,7 @@ void MAP_MANAGER::MapMove(const Eigen::Matrix4d& transformTobeMapped){
     laserCloudCenWidth--;
   }
 
-  while (centerCubeK < 8) {
+  while (centerCubeK < cubeMargin) {
     for (int i = 0; i < laserCloudDepth; i++) {
       for (int j = 0; j < laserCloudWidth; j++) {
         int k = laserCloudHeight - 1;
@@ -558,7 +558,7 @@ void MAP_MANAGER::MapMove(const Eigen::Matrix4d& transformTobeMapped){
     laserCloudCenHeight++;
   }
 
-  while (centerCubeK >= laserCloudHeight - 8) {
+  while (centerCubeK >= laserCloudHeight - cubeMargin) {
     for (int i = 0; i < laserCloudDepth; i++) {
       for (int j = 0; j < laserCloudWidth; j++) {
         int k = 0;

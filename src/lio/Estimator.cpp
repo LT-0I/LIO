@@ -1,7 +1,13 @@
 #include "Estimator/Estimator.h"
 #include <omp.h>
 
-Estimator::Estimator(const float& filter_corner, const float& filter_surf){
+Estimator::Estimator(const float& filter_corner, const float& filter_surf,
+                     int max_iters, int ceres_max_iters,
+                     double conv_r, double conv_t,
+                     float filter_nonfeature)
+  : max_iterations_(max_iters), ceres_max_iterations_(ceres_max_iters),
+    convergence_threshold_r_(conv_r), convergence_threshold_t_(conv_t),
+    filter_nonfeature_(filter_nonfeature) {
   laserCloudCornerFromLocal.reset(new pcl::PointCloud<PointType>);
   laserCloudSurfFromLocal.reset(new pcl::PointCloud<PointType>);
   laserCloudNonFeatureFromLocal.reset(new pcl::PointCloud<PointType>);
@@ -45,7 +51,7 @@ Estimator::Estimator(const float& filter_corner, const float& filter_surf){
 
   downSizeFilterCorner.setLeafSize(filter_corner, filter_corner, filter_corner);
   downSizeFilterSurf.setLeafSize(filter_surf, filter_surf, filter_surf);
-  downSizeFilterNonFeature.setLeafSize(0.4, 0.4, 0.4);
+  downSizeFilterNonFeature.setLeafSize(filter_nonfeature_, filter_nonfeature_, filter_nonfeature_);
   map_manager = new MAP_MANAGER(filter_corner, filter_surf);
   threadMap = std::thread(&Estimator::threadMapIncrement, this);
 }
@@ -53,6 +59,7 @@ Estimator::Estimator(const float& filter_corner, const float& filter_surf){
 Estimator::~Estimator(){
   delete map_manager;
 }
+
 
 [[noreturn]] void Estimator::threadMapIncrement(){
   pcl::PointCloud<PointType>::Ptr laserCloudCorner(new pcl::PointCloud<PointType>);
@@ -165,11 +172,7 @@ void Estimator::processPointToLine(std::vector<ceres::CostFunction *>& edges,
 
       bool found_global = false;
       if(GlobalCornerMap[id].points.size() > 100) {
-#if USE_NANOFLANN
         CornerKdMap[id].nearestKSearch(_pointSel, 5, _pointSearchInd, _pointSearchSqDis);
-#else
-        CornerKdMap[id].nearestKSearch(_pointSel, 5, _pointSearchInd, _pointSearchSqDis);
-#endif
         
         if (_pointSearchSqDis.size() >= 5 && _pointSearchSqDis[4] < thres_dist) {
           float cx = 0, cy = 0, cz = 0;
@@ -924,8 +927,10 @@ void Estimator::Estimate(std::list<LidarFrame>& lidarFrameList,
   }
 
   // excute optimize process
-  const int max_iters = 5;
-  for(int iterOpt=0; iterOpt<max_iters; ++iterOpt){
+  // 动态迭代次数：初始化阶段少迭代，稳定后多迭代
+  const int max_iters = (windowSize == SLIDEWINDOWSIZE) ? max_iterations_ : std::max(1, max_iterations_ - 1);
+  bool converged = false;
+  for(int iterOpt=0; iterOpt<max_iters && !converged; ++iterOpt){
 
     vector2double(lidarFrameList);
 
@@ -1147,19 +1152,9 @@ void Estimator::Estimate(std::list<LidarFrame>& lidarFrameList,
     ceres::Solver::Options options;
     options.linear_solver_type = ceres::DENSE_SCHUR;
     options.trust_region_strategy_type = ceres::DOGLEG;
-    options.max_num_iterations = 10;
+    options.max_num_iterations = ceres_max_iterations_;
     options.minimizer_progress_to_stdout = false;
     options.num_threads = 8;  // RK3588: 4大核 + 4小核
-    
-    // === Ceres 性能优化 ===
-    // 1. 放宽收敛容差（加快早停，但保持精度）
-    options.function_tolerance = 1e-5;   // 默认 1e-6
-    options.parameter_tolerance = 1e-6;  // 默认 1e-8
-    // 2. 使用 LAPACK 加速稠密运算（如果可用）
-    options.dense_linear_algebra_library_type = ceres::LAPACK;
-    // 3. Dogleg 子空间方法（更快收敛）
-    options.dogleg_type = ceres::SUBSPACE_DOGLEG;
-    
     ceres::Solver::Summary summary;
     ceres::Solve(options, &problem, &summary);
 
@@ -1170,9 +1165,14 @@ void Estimator::Estimate(std::list<LidarFrame>& lidarFrameList,
     Eigen::Vector3d V_after_opti = lidarFrameList.back().V;
     double deltaR = (q_before_opti.angularDistance(q_after_opti)) * 180.0 / M_PI;
     double deltaT = (t_before_opti - t_after_opti).norm();
+    
+    // 动态收敛检测：位姿变化足够小则提前终止
+    if (deltaR < convergence_threshold_r_ && deltaT < convergence_threshold_t_) {
+      converged = true;
+    }
 
-    if (deltaR < 0.05 && deltaT < 0.05 || (iterOpt+1) == max_iters){
-      ROS_INFO("Frame: %d\n",frame_count++);
+    if (converged || (iterOpt+1) == max_iters){
+      ROS_INFO("Frame: %d, iters: %d\n", frame_count++, iterOpt+1);
       if(windowSize != SLIDEWINDOWSIZE) break;
       // apply marginalization
       auto *marginalization_info = new MarginalizationInfo();

@@ -28,7 +28,13 @@ Eigen::Vector3d exPlb, exPbl;
 Eigen::Vector3d GravityVector;
 float filter_parameter_corner = 0.2;
 float filter_parameter_surf = 0.4;
+float filter_parameter_nonfeature = 0.4;
 int IMU_Mode = 2;
+// 优化参数
+int max_iterations = 4;
+int ceres_max_iterations = 10;
+double convergence_threshold_r = 0.05;
+double convergence_threshold_t = 0.05;
 sensor_msgs::NavSatFix gps;
 int pushCount = 0;
 double startTime = 0;
@@ -572,7 +578,13 @@ int main(int argc, char** argv)
 
   ros::param::get("~filter_parameter_corner",filter_parameter_corner);
   ros::param::get("~filter_parameter_surf",filter_parameter_surf);
+  ros::param::get("~filter_parameter_nonfeature",filter_parameter_nonfeature);
   ros::param::get("~IMU_Mode",IMU_Mode);
+  // 优化参数
+  ros::param::get("~max_iterations", max_iterations);
+  ros::param::get("~ceres_max_iterations", ceres_max_iterations);
+  ros::param::get("~convergence_threshold_r", convergence_threshold_r);
+  ros::param::get("~convergence_threshold_t", convergence_threshold_t);
 	std::vector<double> vecTlb;
 	ros::param::get("~Extrinsic_Tlb",vecTlb);
 
@@ -609,7 +621,10 @@ int main(int argc, char** argv)
   tfBroadcaster = new tf::TransformBroadcaster();
 
   laserCloudFullRes.reset(new pcl::PointCloud<PointType>);
-  estimator = new Estimator(filter_parameter_corner, filter_parameter_surf);
+  estimator = new Estimator(filter_parameter_corner, filter_parameter_surf,
+                            max_iterations, ceres_max_iterations,
+                            convergence_threshold_r, convergence_threshold_t,
+                            filter_parameter_nonfeature);
 	lidarFrameList.reset(new std::list<Estimator::LidarFrame>);
 
   std::thread thread_process{process};

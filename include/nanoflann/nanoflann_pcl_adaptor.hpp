@@ -70,7 +70,7 @@ public:
         size_t  // 索引类型
     >;
 
-    KdTreeNano() : adaptor_(), tree_(nullptr) {}
+    KdTreeNano() : adaptor_(), tree_(nullptr), cloud_(nullptr) {}
     
     ~KdTreeNano() = default;
 
@@ -81,10 +81,13 @@ public:
     void setInputCloud(const PointCloudPtr& cloud) {
         if (!cloud || cloud->empty()) {
             tree_.reset();
+            cloud_.reset();
             return;
         }
         
-        adaptor_.setInputCloud(cloud.get());
+        // 保存点云的 shared_ptr，防止悬空指针
+        cloud_ = cloud;
+        adaptor_.setInputCloud(cloud_.get());
         
         // 构建 KD-tree (叶子节点最大点数 = 10)
         tree_ = std::make_unique<KDTree>(
@@ -148,6 +151,7 @@ public:
     size_t size() const { return adaptor_.kdtree_get_point_count(); }
 
 private:
+    PointCloudPtr cloud_;  // 保存点云 shared_ptr，防止悬空指针
     Adaptor adaptor_;
     std::unique_ptr<KDTree> tree_;
 };

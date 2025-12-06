@@ -20,6 +20,8 @@
 #include "utils/ceresfunc.h"
 #include "IMUIntegrator/IMUIntegrator.h"
 #include <chrono>
+#include <unordered_map>
+#include <shared_mutex>
 
 // 启用 nanoflann 替换 PCL KdTreeFLANN
 #define USE_NANOFLANN 1
@@ -160,7 +162,10 @@ public:
 public:
 	/** \brief constructor of Estimator
 	*/
-	Estimator(const float& filter_corner, const float& filter_surf);
+	Estimator(const float& filter_corner, const float& filter_surf,
+	          int max_iters = 4, int ceres_max_iters = 10,
+	          double conv_r = 0.05, double conv_t = 0.05,
+	          float filter_nonfeature = 0.4f);
 
 	~Estimator();
 
@@ -284,14 +289,15 @@ private:
 	std::mutex mtx_Map;
 	std::thread threadMap;
 
-	// 全局地图 KD-tree 保持使用 PCL（数组太大，nanoflann 会导致栈溢出）
-	pcl::KdTreeFLANN<PointType> CornerKdMap[10000];
-	pcl::KdTreeFLANN<PointType> SurfKdMap[10000];
-	pcl::KdTreeFLANN<PointType> NonFeatureKdMap[10000];
-
+	// 全局地图点云（保留）
 	pcl::PointCloud<PointType> GlobalSurfMap[10000];
 	pcl::PointCloud<PointType> GlobalCornerMap[10000];
 	pcl::PointCloud<PointType> GlobalNonFeatureMap[10000];
+
+	// 全局地图 KD-tree（使用 PCL，nanoflann 缓存方案精度差已回退）
+	pcl::KdTreeFLANN<PointType> CornerKdMap[10000];
+	pcl::KdTreeFLANN<PointType> SurfKdMap[10000];
+	pcl::KdTreeFLANN<PointType> NonFeatureKdMap[10000];
 
 	int laserCenWidth_last = 10;
 	int laserCenHeight_last = 5;
@@ -308,6 +314,13 @@ private:
 	int map_skip_frame = 2; //every map_skip_frame frame update map
 	double plan_weight_tan = 0.0;
 	double thres_dist = 1.0;
+	
+	// === 可调参数（从 launch 文件读取） ===
+	int max_iterations_ = 4;           // 外层迭代次数
+	int ceres_max_iterations_ = 10;    // Ceres 内部迭代次数
+	double convergence_threshold_r_ = 0.05;  // 收敛阈值（角度，度）
+	double convergence_threshold_t_ = 0.05;  // 收敛阈值（位移，米）
+	float filter_nonfeature_ = 0.4f;   // NonFeature 下采样体素
 };
 
 #endif //LIO_LIVOX_ESTIMATOR_H

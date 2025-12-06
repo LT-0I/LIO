@@ -299,9 +299,9 @@ private:
 	pcl::KdTreeFLANN<PointType> SurfKdMap[10000];
 	pcl::KdTreeFLANN<PointType> NonFeatureKdMap[10000];
 
-	int laserCenWidth_last = 10;
-	int laserCenHeight_last = 5;
-	int laserCenDepth_last = 10;
+	int laserCenWidth_last = 8;   // 对应 CUBE 网格 17
+	int laserCenHeight_last = 4;  // 对应 CUBE 网格 9
+	int laserCenDepth_last = 8;   // 对应 CUBE 网格 17
 
 	static const int localMapWindowSize = 50;
 	int localMapID = 0;

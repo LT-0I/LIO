@@ -152,18 +152,21 @@ public:
     void PublishSnapshot();
 
 private:
-    int laserCloudCenWidth = 10;
-    int laserCloudCenHeight = 5;
-    int laserCloudCenDepth = 10;
+    int laserCloudCenWidth = 8;   // (17-1)/2
+    int laserCloudCenHeight = 4;  // (9-1)/2
+    int laserCloudCenDepth = 8;   // (17-1)/2
 
-    int laserCloudCenWidth_last = 10;
-    int laserCloudCenHeight_last = 5;
-    int laserCloudCenDepth_last = 10;
+    int laserCloudCenWidth_last = 8;
+    int laserCloudCenHeight_last = 4;
+    int laserCloudCenDepth_last = 8;
 
-    static const int laserCloudWidth = 21;
-    static const int laserCloudHeight = 11;
-    static const int laserCloudDepth = 21;
-    static const int laserCloudNum = laserCloudWidth * laserCloudHeight * laserCloudDepth;//4851
+    // CUBE 网格大小（可调整以换取速度，减小会缩小地图覆盖范围）
+    // 原始: 21×21×11 = 4851, 覆盖 1050m×1050m×550m
+    // 优化: 17×17×9 = 2601, 覆盖 850m×850m×450m
+    static const int laserCloudWidth = 17;
+    static const int laserCloudHeight = 9;
+    static const int laserCloudDepth = 17;
+    static const int laserCloudNum = laserCloudWidth * laserCloudHeight * laserCloudDepth;//2601
     pcl::PointCloud<PointType>::Ptr laserCloudCornerArray[laserCloudNum];
     pcl::PointCloud<PointType>::Ptr laserCloudSurfArray[laserCloudNum];
     pcl::PointCloud<PointType>::Ptr laserCloudNonFeatureArray[laserCloudNum];

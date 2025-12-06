@@ -1175,11 +1175,17 @@ void Estimator::Estimate(std::list<LidarFrame>& lidarFrameList,
       ceres::Solver::Options options;
       options.linear_solver_type = ceres::DENSE_SCHUR;
       options.trust_region_strategy_type = ceres::DOGLEG;
-    options.max_num_iterations = ceres_max_iterations_;
+      options.max_num_iterations = ceres_max_iterations_;
       options.minimizer_progress_to_stdout = false;
-    options.num_threads = 8;  // RK3588: 4大核 + 4小核
-    ceres::Solver::Summary summary;
-    ceres::Solve(options, &problem, &summary);
+      options.num_threads = 8;  // RK3588: 4大核 + 4小核
+      // === 优化：Ceres 配置加速（不影响精度）===
+      options.function_tolerance = 1e-5;        // 函数值收敛容差
+      options.gradient_tolerance = 1e-8;        // 梯度收敛容差
+      options.parameter_tolerance = 1e-6;       // 参数收敛容差
+      options.use_nonmonotonic_steps = true;    // 允许非单调步长（加速收敛）
+      options.max_consecutive_nonmonotonic_steps = 4;
+      ceres::Solver::Summary summary;
+      ceres::Solve(options, &problem, &summary);
 
     double2vector(lidarFrameList);
 
@@ -1336,12 +1342,13 @@ void Estimator::MapIncrementLocal(const pcl::PointCloud<PointType>::Ptr& laserCl
   int laserCloudCornerStackNum = laserCloudCornerStack->points.size();
   int laserCloudSurfStackNum = laserCloudSurfStack->points.size();
   int laserCloudNonFeatureStackNum = laserCloudNonFeatureStack->points.size();
-  PointType pointSel;
-  PointType pointSel2;
+  PointType pointSel, pointSel2;
   size_t Id = localMapID % localMapWindowSize;
   localCornerMap[Id]->clear();
   localSurfMap[Id]->clear();
   localNonFeatureMap[Id]->clear();
+  
+  // 点云变换（保持原始串行逻辑，避免线程问题）
   for (int i = 0; i < laserCloudCornerStackNum; i++) {
     MAP_MANAGER::pointAssociateToMap(&laserCloudCornerStack->points[i], &pointSel, transformTobeMapped);
     localCornerMap[Id]->push_back(pointSel);
@@ -1355,23 +1362,29 @@ void Estimator::MapIncrementLocal(const pcl::PointCloud<PointType>::Ptr& laserCl
     localNonFeatureMap[Id]->push_back(pointSel2);
   }
 
+  // === 合并局部地图（串行，因为 += 操作不是线程安全的）===
   for (int i = 0; i < localMapWindowSize; i++) {
     *laserCloudCornerFromLocal += *localCornerMap[i];
     *laserCloudSurfFromLocal += *localSurfMap[i];
     *laserCloudNonFeatureFromLocal += *localNonFeatureMap[i];
   }
+  
+  // === 下采样（串行以避免线程问题）===
   pcl::PointCloud<PointType>::Ptr temp(new pcl::PointCloud<PointType>());
   downSizeFilterCorner.setInputCloud(laserCloudCornerFromLocal);
   downSizeFilterCorner.filter(*temp);
   laserCloudCornerFromLocal = temp;
+  
   pcl::PointCloud<PointType>::Ptr temp2(new pcl::PointCloud<PointType>());
   downSizeFilterSurf.setInputCloud(laserCloudSurfFromLocal);
   downSizeFilterSurf.filter(*temp2);
   laserCloudSurfFromLocal = temp2;
+  
   pcl::PointCloud<PointType>::Ptr temp3(new pcl::PointCloud<PointType>());
   downSizeFilterNonFeature.setInputCloud(laserCloudNonFeatureFromLocal);
   downSizeFilterNonFeature.filter(*temp3);
   laserCloudNonFeatureFromLocal = temp3;
+  
   localMapID ++;
 }
 

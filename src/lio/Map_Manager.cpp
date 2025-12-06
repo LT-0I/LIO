@@ -95,12 +95,12 @@ void MAP_MANAGER::MapIncrement(const pcl::PointCloud<PointType>::Ptr& laserCloud
   syncedCubeCount = 0;
   for(int i = 0; i < laserCloudNum; i++){
     if(cubeNeedSync[i]){
-      CornerKdMap_last[i] = *laserCloudCornerKdMap[i];
-      SurfKdMap_last[i] = *laserCloudSurfKdMap[i];
-      NonFeatureKdMap_last[i] = *laserCloudNonFeatureKdMap[i];
-      laserCloudSurf_for_match[i] = *laserCloudSurfArray[i];
-      laserCloudCorner_for_match[i] = *laserCloudCornerArray[i];
-      laserCloudNonFeature_for_match[i] = *laserCloudNonFeatureArray[i];
+    CornerKdMap_last[i] = *laserCloudCornerKdMap[i];
+    SurfKdMap_last[i] = *laserCloudSurfKdMap[i];
+    NonFeatureKdMap_last[i] = *laserCloudNonFeatureKdMap[i];
+    laserCloudSurf_for_match[i] = *laserCloudSurfArray[i];
+    laserCloudCorner_for_match[i] = *laserCloudCornerArray[i];
+    laserCloudNonFeature_for_match[i] = *laserCloudNonFeatureArray[i];
       cubeNeedSync[i] = false;  // 清除脏标记
       syncedCubeCount++;
     }
@@ -202,44 +202,44 @@ void MAP_MANAGER::MapIncrement(const pcl::PointCloud<PointType>::Ptr& laserCloud
     local_non_filter.setLeafSize(0.4, 0.4, 0.4);
 
     #pragma omp for schedule(dynamic, 64) nowait
-    for(int i = 0; i < laserCloudNum; i++){
+  for(int i = 0; i < laserCloudNum; i++){
       // 任意 feature 类型变化，标记此 cube 需要下一帧同步
       bool changed = CornerChangeFlag[i] || SurfChangeFlag[i] || NonFeatureChangeFlag[i];
       
-      if(CornerChangeFlag[i]){
-        if(laserCloudCornerArray[i]->points.size() > 300){
+    if(CornerChangeFlag[i]){
+      if(laserCloudCornerArray[i]->points.size() > 300){
           local_corner_filter.setInputCloud(laserCloudCornerArray[i]);
-          laserCloudCornerArrayStack[i]->clear();
+        laserCloudCornerArrayStack[i]->clear();
           local_corner_filter.filter(*laserCloudCornerArrayStack[i]);
-          pcl::PointCloud<PointType>::Ptr tmp = laserCloudCornerArrayStack[i];
-          laserCloudCornerArrayStack[i] = laserCloudCornerArray[i];
-          laserCloudCornerArray[i] = tmp;
-        }
-        laserCloudCornerKdMap[i]->setInputCloud(laserCloudCornerArray[i]);
+        pcl::PointCloud<PointType>::Ptr tmp = laserCloudCornerArrayStack[i];
+        laserCloudCornerArrayStack[i] = laserCloudCornerArray[i];
+        laserCloudCornerArray[i] = tmp;
       }
+      laserCloudCornerKdMap[i]->setInputCloud(laserCloudCornerArray[i]); 
+    }
 
-      if(SurfChangeFlag[i]){
-        if(laserCloudSurfArray[i]->points.size() > 300){
+    if(SurfChangeFlag[i]){
+      if(laserCloudSurfArray[i]->points.size() > 300){
           local_surf_filter.setInputCloud(laserCloudSurfArray[i]);
-          laserCloudSurfArrayStack[i]->clear();
+        laserCloudSurfArrayStack[i]->clear();
           local_surf_filter.filter(*laserCloudSurfArrayStack[i]);
-          pcl::PointCloud<PointType>::Ptr tmp = laserCloudSurfArrayStack[i];
-          laserCloudSurfArrayStack[i] = laserCloudSurfArray[i];
-          laserCloudSurfArray[i] = tmp;
-        }
-        laserCloudSurfKdMap[i]->setInputCloud(laserCloudSurfArray[i]);
+        pcl::PointCloud<PointType>::Ptr tmp = laserCloudSurfArrayStack[i];
+        laserCloudSurfArrayStack[i] = laserCloudSurfArray[i];
+        laserCloudSurfArray[i] = tmp;
       }
+      laserCloudSurfKdMap[i]->setInputCloud(laserCloudSurfArray[i]);
+    }
 
-      if(NonFeatureChangeFlag[i]){
-        if(laserCloudNonFeatureArray[i]->points.size() > 300){
+    if(NonFeatureChangeFlag[i]){
+      if(laserCloudNonFeatureArray[i]->points.size() > 300){
           local_non_filter.setInputCloud(laserCloudNonFeatureArray[i]);
-          laserCloudNonFeatureArrayStack[i]->clear();
+        laserCloudNonFeatureArrayStack[i]->clear();
           local_non_filter.filter(*laserCloudNonFeatureArrayStack[i]);
-          pcl::PointCloud<PointType>::Ptr tmp = laserCloudNonFeatureArrayStack[i];
-          laserCloudNonFeatureArrayStack[i] = laserCloudNonFeatureArray[i];
-          laserCloudNonFeatureArray[i] = tmp;
-        }
-        laserCloudNonFeatureKdMap[i]->setInputCloud(laserCloudNonFeatureArray[i]);
+        pcl::PointCloud<PointType>::Ptr tmp = laserCloudNonFeatureArrayStack[i];
+        laserCloudNonFeatureArrayStack[i] = laserCloudNonFeatureArray[i];
+        laserCloudNonFeatureArray[i] = tmp;
+      }
+      laserCloudNonFeatureKdMap[i]->setInputCloud(laserCloudNonFeatureArray[i]);
       }
       
       // 标记脏 cube，下一帧增量拷贝时使用

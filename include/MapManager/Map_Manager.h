@@ -12,7 +12,7 @@
 // MapSnapshot - 零拷贝地图快照，供 Estimator 只读访问
 // =========================================================
 // 前向声明 CUBE 数量（需要在 MapSnapshot 之前定义）
-static const int CUBE_NUM = 17 * 17 * 9;  // 2601
+static const int CUBE_NUM = 21 * 11 * 21;  // 4851 (原始值，回退)
 
 struct MapSnapshot {
     typedef pcl::PointXYZINormal PointType;
@@ -29,9 +29,9 @@ struct MapSnapshot {
     pcl::PointCloud<PointType>* nonFeaturePointMap[N];
     
     // 地图中心坐标
-    int cenWidth = 8;   // 17/2
-    int cenHeight = 4;  // 9/2
-    int cenDepth = 8;   // 17/2
+    int cenWidth = 10;   // 21/2
+    int cenHeight = 5;   // 11/2
+    int cenDepth = 10;   // 21/2
     
     // 快照有效标志
     bool valid = false;
@@ -155,21 +155,21 @@ public:
     void PublishSnapshot();
 
 private:
-    int laserCloudCenWidth = 8;   // 17/2
-    int laserCloudCenHeight = 4;  // 9/2
-    int laserCloudCenDepth = 8;   // 17/2
+    int laserCloudCenWidth = 10;   // 21/2
+    int laserCloudCenHeight = 5;   // 11/2
+    int laserCloudCenDepth = 10;   // 21/2
 
-    int laserCloudCenWidth_last = 8;
-    int laserCloudCenHeight_last = 4;
-    int laserCloudCenDepth_last = 8;
+    int laserCloudCenWidth_last = 10;
+    int laserCloudCenHeight_last = 5;
+    int laserCloudCenDepth_last = 10;
 
-    // CUBE 网格大小（优化版：减少 46%）
-    static const int laserCloudWidth = 17;
-    static const int laserCloudHeight = 9;
-    static const int laserCloudDepth = 17;
-    static const int laserCloudNum = laserCloudWidth * laserCloudHeight * laserCloudDepth;//2601
-    // 地图滚动边界（原值8，需要配合 CUBE 大小调整）
-    static const int cubeMargin = 3;
+    // CUBE 网格大小（原始值，回退）
+    static const int laserCloudWidth = 21;
+    static const int laserCloudHeight = 11;
+    static const int laserCloudDepth = 21;
+    static const int laserCloudNum = laserCloudWidth * laserCloudHeight * laserCloudDepth;//4851
+    // 地图滚动边界
+    static const int cubeMargin = 8;
     pcl::PointCloud<PointType>::Ptr laserCloudCornerArray[laserCloudNum];
     pcl::PointCloud<PointType>::Ptr laserCloudSurfArray[laserCloudNum];
     pcl::PointCloud<PointType>::Ptr laserCloudNonFeatureArray[laserCloudNum];

@@ -22,6 +22,7 @@
 #include <chrono>
 #include <unordered_map>
 #include <shared_mutex>
+#include <array>
 
 // 启用 nanoflann 替换 PCL KdTreeFLANN
 #define USE_NANOFLANN 1
@@ -299,9 +300,9 @@ private:
 	pcl::KdTreeFLANN<PointType> SurfKdMap[10000];
 	pcl::KdTreeFLANN<PointType> NonFeatureKdMap[10000];
 
-	int laserCenWidth_last = 8;   // 对应 CUBE 网格 17
-	int laserCenHeight_last = 4;  // 对应 CUBE 网格 9
-	int laserCenDepth_last = 8;   // 对应 CUBE 网格 17
+	int laserCenWidth_last = 10;   // 对应 CUBE 网格 21
+	int laserCenHeight_last = 5;   // 对应 CUBE 网格 11
+	int laserCenDepth_last = 10;   // 对应 CUBE 网格 21
 
 	static const int localMapWindowSize = 50;
 	int localMapID = 0;
@@ -321,6 +322,21 @@ private:
 	double convergence_threshold_r_ = 0.05;  // 收敛阈值（角度，度）
 	double convergence_threshold_t_ = 0.05;  // 收敛阈值（位移，米）
 	float filter_nonfeature_ = 0.4f;   // NonFeature 下采样体素
+	
+	// === 优化：预分配特征存储（避免每帧堆分配） ===
+	static constexpr int MAX_FEATURES_PER_FRAME = 3000;
+	std::array<std::vector<FeatureLine>, SLIDEWINDOWSIZE> vLineFeatures_;
+	std::array<std::vector<FeaturePlanVec>, SLIDEWINDOWSIZE> vPlanFeatures_;
+	std::array<std::vector<FeatureNon>, SLIDEWINDOWSIZE> vNonFeatures_;
+	std::array<std::vector<ceres::CostFunction*>, SLIDEWINDOWSIZE> edgesLine_;
+	std::array<std::vector<ceres::CostFunction*>, SLIDEWINDOWSIZE> edgesPlan_;
+	std::array<std::vector<ceres::CostFunction*>, SLIDEWINDOWSIZE> edgesNon_;
+	
+	// === 优化：退化检测 ===
+	bool is_degenerate_ = false;
+	int valid_corner_count_ = 0;
+	int valid_surf_count_ = 0;
+	void checkDegeneracy();
 };
 
 #endif //LIO_LIVOX_ESTIMATOR_H

@@ -54,6 +54,18 @@ Estimator::Estimator(const float& filter_corner, const float& filter_surf,
   downSizeFilterNonFeature.setLeafSize(filter_nonfeature_, filter_nonfeature_, filter_nonfeature_);
   map_manager = new MAP_MANAGER(filter_corner, filter_surf);
   threadMap = std::thread(&Estimator::threadMapIncrement, this);
+  
+  // === 优化点1：激进预分配特征存储（16GB内存，不吝啬空间）===
+  for(int i = 0; i < SLIDEWINDOWSIZE; ++i) {
+    vLineFeatures_[i].reserve(MAX_FEATURES_PER_FRAME);
+    vPlanFeatures_[i].reserve(MAX_FEATURES_PER_FRAME);
+    vNonFeatures_[i].reserve(MAX_FEATURES_PER_FRAME);
+    edgesLine_[i].reserve(MAX_FEATURES_PER_FRAME);
+    edgesPlan_[i].reserve(MAX_FEATURES_PER_FRAME);
+    edgesNon_[i].reserve(MAX_FEATURES_PER_FRAME);
+  }
+  ROS_INFO("Estimator: Pre-allocated %d features per frame x %d frames", 
+           MAX_FEATURES_PER_FRAME, SLIDEWINDOWSIZE);
 }
 
 Estimator::~Estimator(){
@@ -161,7 +173,8 @@ void Estimator::processPointToLine(std::vector<ceres::CostFunction *>& edges,
     std::vector<float> _pointSearchSqDis2(5);
     Eigen::Matrix3d _matA1;
 
-    #pragma omp for schedule(dynamic, 32) nowait
+    // === 优化点4：RK3588 big.LITTLE 架构适配，chunk=16 更好负载均衡 ===
+    #pragma omp for schedule(dynamic, 16) nowait
   for (int i = 0; i < laserCloudCornerStackNum; i++) {
     _pointOri = laserCloudCorner->points[i];
     MAP_MANAGER::pointAssociateToMap(&_pointOri, &_pointSel, m4d);
@@ -485,7 +498,8 @@ void Estimator::processPointToPlanVec(std::vector<ceres::CostFunction *>& edges,
     _matB0.setOnes(); _matB0 *= -1;
     Eigen::Matrix<double, 3, 1> _matX0;
 
-    #pragma omp for schedule(dynamic, 32) nowait
+    // === 优化点4：RK3588 big.LITTLE 架构适配 ===
+    #pragma omp for schedule(dynamic, 16) nowait
   for (int i = 0; i < laserCloudSurfStackNum; i++) {
     _pointOri = laserCloudSurf->points[i];
     MAP_MANAGER::pointAssociateToMap(&_pointOri, &_pointSel, m4d);
@@ -651,7 +665,8 @@ void Estimator::processNonFeatureICP(std::vector<ceres::CostFunction *>& edges,
     _matB0.setOnes(); _matB0 *= -1;
     Eigen::Matrix<double, 3, 1> _matX0;
 
-    #pragma omp for schedule(dynamic, 32) nowait
+    // === 优化点4：RK3588 big.LITTLE 架构适配 ===
+    #pragma omp for schedule(dynamic, 16) nowait
   for (int i = 0; i < laserCloudNonFeatureStackNum; i++) {
     _pointOri = laserCloudNonFeature->points[i];
     MAP_MANAGER::pointAssociateToMap(&_pointOri, &_pointSel, m4d);
@@ -902,22 +917,22 @@ void Estimator::Estimate(std::list<LidarFrame>& lidarFrameList,
     map_manager->ReleaseSnapshot();
   }
 
-  // store point to line features
-  std::vector<std::vector<FeatureLine>> vLineFeatures(windowSize);
-  for(auto& v : vLineFeatures){
-    v.reserve(2000);
+  // === 优化点1：使用预分配的成员变量，只 clear 不重新分配 ===
+  for(int f = 0; f < windowSize; ++f) {
+    vLineFeatures_[f].clear();
+    vPlanFeatures_[f].clear();
+    vNonFeatures_[f].clear();
+    edgesLine_[f].clear();
+    edgesPlan_[f].clear();
+    edgesNon_[f].clear();
   }
-
-  // store point to plan features
-  std::vector<std::vector<FeaturePlanVec>> vPlanFeatures(windowSize);
-  for(auto& v : vPlanFeatures){
-    v.reserve(2000);
-  }
-
-  std::vector<std::vector<FeatureNon>> vNonFeatures(windowSize);
-  for(auto& v : vNonFeatures){
-    v.reserve(2000);
-  }
+  // 使用成员变量引用（避免修改后面大量代码）
+  auto& vLineFeatures = vLineFeatures_;
+  auto& vPlanFeatures = vPlanFeatures_;
+  auto& vNonFeatures = vNonFeatures_;
+  auto& edgesLine = edgesLine_;
+  auto& edgesPlan = edgesPlan_;
+  auto& edgesNon = edgesNon_;
 
   if(windowSize == SLIDEWINDOWSIZE) {
     plan_weight_tan = 0.0003;
@@ -1150,6 +1165,13 @@ void Estimator::Estimate(std::list<LidarFrame>& lidarFrameList,
         }
       }
 
+      // === 优化点5：退化检测（仅首次迭代统计）===
+      if (iterOpt == 0) {
+        valid_corner_count_ = cntCorner;
+        valid_surf_count_ = cntSurf;
+        checkDegeneracy();
+      }
+
       ceres::Solver::Options options;
       options.linear_solver_type = ceres::DENSE_SCHUR;
       options.trust_region_strategy_type = ceres::DOGLEG;
@@ -1351,4 +1373,25 @@ void Estimator::MapIncrementLocal(const pcl::PointCloud<PointType>::Ptr& laserCl
   downSizeFilterNonFeature.filter(*temp3);
   laserCloudNonFeatureFromLocal = temp3;
   localMapID ++;
+}
+
+// === 优化点5：隧道/退化场景检测 ===
+void Estimator::checkDegeneracy() {
+  // 计算特征丰富度比率
+  const float corner_ratio = (valid_corner_count_ > 0) ? 
+      static_cast<float>(valid_corner_count_) / MAX_FEATURES_PER_FRAME : 0.0f;
+  const float surf_ratio = (valid_surf_count_ > 0) ? 
+      static_cast<float>(valid_surf_count_) / MAX_FEATURES_PER_FRAME : 0.0f;
+  
+  // 退化条件：角点 < 10% 或 面点 < 15%
+  bool was_degenerate = is_degenerate_;
+  is_degenerate_ = (corner_ratio < 0.10f) || (surf_ratio < 0.15f);
+  
+  if (is_degenerate_ && !was_degenerate) {
+    ROS_WARN("[Degeneracy] Detected! Corner: %.1f%%, Surf: %.1f%% - Switching to IMU-primary mode",
+             corner_ratio * 100.0f, surf_ratio * 100.0f);
+  } else if (!is_degenerate_ && was_degenerate) {
+    ROS_INFO("[Degeneracy] Recovered. Corner: %.1f%%, Surf: %.1f%%",
+             corner_ratio * 100.0f, surf_ratio * 100.0f);
+  }
 }

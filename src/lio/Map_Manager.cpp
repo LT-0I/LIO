@@ -2,7 +2,9 @@
 #include <fstream>
 #include <omp.h>
 
-MAP_MANAGER::MAP_MANAGER(const float& filter_corner, const float& filter_surf){
+MAP_MANAGER::MAP_MANAGER(const float& filter_corner, const float& filter_surf)
+    : filter_corner_leaf_(filter_corner),
+      filter_surf_leaf_(filter_surf){
   for (int i = 0; i < laserCloudNum; i++) {
     laserCloudCornerArray[i].reset(new pcl::PointCloud<PointType>());
     laserCloudSurfArray[i].reset(new pcl::PointCloud<PointType>());
@@ -23,8 +25,8 @@ MAP_MANAGER::MAP_MANAGER(const float& filter_corner, const float& filter_surf){
   laserCloudCornerFromMap.reset(new pcl::PointCloud<PointType>());
   laserCloudSurfFromMap.reset(new pcl::PointCloud<PointType>());
   laserCloudNonFeatureFromMap.reset(new pcl::PointCloud<PointType>());
-  downSizeFilterCorner.setLeafSize(0.4, 0.4, 0.4);
-  downSizeFilterSurf.setLeafSize(0.4, 0.4, 0.4);
+  downSizeFilterCorner.setLeafSize(filter_corner_leaf_, filter_corner_leaf_, filter_corner_leaf_);
+  downSizeFilterSurf.setLeafSize(filter_surf_leaf_, filter_surf_leaf_, filter_surf_leaf_);
   downSizeFilterNonFeature.setLeafSize(0.4, 0.4, 0.4);
 }
 
@@ -203,8 +205,8 @@ void MAP_MANAGER::MapIncrement(const pcl::PointCloud<PointType>::Ptr& laserCloud
     pcl::VoxelGrid<PointType> local_corner_filter;
     pcl::VoxelGrid<PointType> local_surf_filter;
     pcl::VoxelGrid<PointType> local_non_filter;
-    local_corner_filter.setLeafSize(0.4, 0.4, 0.4);
-    local_surf_filter.setLeafSize(0.4, 0.4, 0.4);
+    local_corner_filter.setLeafSize(filter_corner_leaf_, filter_corner_leaf_, filter_corner_leaf_);
+    local_surf_filter.setLeafSize(filter_surf_leaf_, filter_surf_leaf_, filter_surf_leaf_);
     local_non_filter.setLeafSize(0.4, 0.4, 0.4);
 
     #pragma omp for schedule(dynamic, 64) nowait

@@ -13,9 +13,6 @@
 typedef pcl::PointXYZINormal PointType;
 
 ros::Publisher pubFullLaserCloud;
-ros::Publisher pubSharpCloud;
-ros::Publisher pubFlatCloud;
-ros::Publisher pubNonFeature;
 
 LidarFeatureExtractor* lidarFeatureExtractor;
 pcl::PointCloud<PointType>::Ptr laserCloud;
@@ -243,9 +240,6 @@ int main(int argc, char** argv)
           pc2Cloud=nodeHandler.subscribe<sensor_msgs::PointCloud2>("/livox/lidar", 100, &lidarCallBackPc2);
   }
   pubFullLaserCloud = nodeHandler.advertise<sensor_msgs::PointCloud2>("/livox_full_cloud", 10);
-  pubSharpCloud = nodeHandler.advertise<sensor_msgs::PointCloud2>("/livox_less_sharp_cloud", 10);
-  pubFlatCloud = nodeHandler.advertise<sensor_msgs::PointCloud2>("/livox_less_flat_cloud", 10);
-  pubNonFeature = nodeHandler.advertise<sensor_msgs::PointCloud2>("/livox_nonfeature_cloud", 10);
 
   lidarFeatureExtractor = new LidarFeatureExtractor(N_SCANS,NumCurvSize,DistanceFaraway,NumFlat,PartNum,
                                                     FlatThreshold,BreakCornerDis,LidarNearestDis,KdTreeCornerOutlierDis);

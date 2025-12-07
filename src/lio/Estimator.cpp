@@ -418,10 +418,6 @@ void Estimator::processPointToPlan(std::vector<ceres::CostFunction *>& edges,
   _matX0.setZero();
   int laserCloudSurfStackNum = laserCloudSurf->points.size();
 
-  int debug_num1 = 0;
-  int debug_num2 = 0;
-  int debug_num12 = 0;
-  int debug_num22 = 0;
   for (int i = 0; i < laserCloudSurfStackNum; i++) {
     _pointOri = laserCloudSurf->points[i];
     MAP_MANAGER::pointAssociateToMap(&_pointOri, &_pointSel, m4d);
@@ -439,7 +435,6 @@ void Estimator::processPointToPlan(std::vector<ceres::CostFunction *>& edges,
       for(int j=0;j<5;++j){ _pointSearchInd[j]=knn_idx_global[j]; _pointSearchSqDis[j]=knn_dist_global[j]; }
 
       if (_pointSearchSqDis[4] < 1.0) {
-        debug_num1 ++;
         const PointType* __restrict__ gpts = gspc->points.data();
         for (int j = 0; j < 5; j++) {
           const auto& pj = gpts[_pointSearchInd[j]];
@@ -473,7 +468,6 @@ void Estimator::processPointToPlan(std::vector<ceres::CostFunction *>& edges,
         }
 
         if (planeValid) {
-          debug_num12 ++;
           auto* e = Cost_NavState_IMU_Plan::Create(Eigen::Vector3d(_pointOri.x,_pointOri.y,_pointOri.z),
                                                             pa,
                                                             pb,
@@ -498,7 +492,6 @@ void Estimator::processPointToPlan(std::vector<ceres::CostFunction *>& edges,
     kdtreeLocal->nearestKSearch(_pointSel, 5, knn_idx_local, knn_dist_local);
     for(int j=0;j<5;++j){ _pointSearchInd2[j]=knn_idx_local[j]; _pointSearchSqDis2[j]=knn_dist_local[j]; }
     if (_pointSearchSqDis2[4] < 1.0) {
-      debug_num2++;
       const PointType* __restrict__ lpts = laserCloudSurfLocal->points.data();
       for (int j = 0; j < 5; j++) { 
         const auto& pj = lpts[_pointSearchInd2[j]];
@@ -529,7 +522,6 @@ void Estimator::processPointToPlan(std::vector<ceres::CostFunction *>& edges,
       }
 
       if (planeValid) {
-        debug_num22 ++;
         auto* e = Cost_NavState_IMU_Plan::Create(Eigen::Vector3d(_pointOri.x,_pointOri.y,_pointOri.z),
                                                           pa,
                                                           pb,

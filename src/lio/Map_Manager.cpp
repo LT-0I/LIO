@@ -62,6 +62,12 @@ void MAP_MANAGER::featureAssociateToMap(const pcl::PointCloud<PointType>::Ptr& l
   int laserCloudCornerNum = laserCloudCorner->points.size();
   int laserCloudSurfNum = laserCloudSurf->points.size();
   int laserCloudNonFeatureNum = laserCloudNonFeature->points.size();
+  laserCloudCornerToMap->clear();
+  laserCloudSurfToMap->clear();
+  laserCloudNonFeatureToMap->clear();
+  laserCloudCornerToMap->reserve(laserCloudCornerNum);
+  laserCloudSurfToMap->reserve(laserCloudSurfNum);
+  laserCloudNonFeatureToMap->reserve(laserCloudNonFeatureNum);
   PointType pointSel1,pointSel2,pointSel3;
   for (int i = 0; i < laserCloudCornerNum; i++) {
     pointAssociateToMap(&laserCloudCorner->points[i], &pointSel1, transformTobeMapped);

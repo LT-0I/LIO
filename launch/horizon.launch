@@ -10,9 +10,9 @@
         <param name="IMU_Mode" type="int" value="2" />
         
         <!-- ========== 体素滤波参数（值越大点越少，越快但可能精度下降）========== -->
-        <param name="filter_parameter_corner" type="double" value="0.3" />
-        <param name="filter_parameter_surf" type="double" value="0.5" />
-        <param name="filter_parameter_nonfeature" type="double" value="0.5" />
+        <param name="filter_parameter_corner" type="double" value="0.2" />
+        <param name="filter_parameter_surf" type="double" value="0.4" />
+        <param name="filter_parameter_nonfeature" type="double" value="0.4" />
         
         <!-- ========== 优化参数（调小可加速，但可能影响精度）========== -->
         <!-- 外层迭代次数（默认4，稳定后；初始化阶段自动-1）-->
@@ -20,8 +20,8 @@
         <!-- Ceres 内部迭代次数（默认10）-->
         <param name="ceres_max_iterations" type="int" value="8" />
         <!-- 收敛阈值：角度（度）和位移（米），小于此值提前终止 -->
-        <param name="convergence_threshold_r" type="double" value="0.06" />
-        <param name="convergence_threshold_t" type="double" value="0.06" />
+        <param name="convergence_threshold_r" type="double" value="0.05" />
+        <param name="convergence_threshold_t" type="double" value="0.05" />
         
         <!-- Extrinsic Parameter between Lidar & IMU -->
         <rosparam param="Extrinsic_Tlb"> [1.0, 0.0, 0.0, -0.05512,

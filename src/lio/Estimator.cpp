@@ -1,6 +1,11 @@
 #include "Estimator/Estimator.h"
 #include <omp.h>
 
+#ifndef LIKELY
+#define LIKELY(x)   __builtin_expect(!!(x), 1)
+#define UNLIKELY(x) __builtin_expect(!!(x), 0)
+#endif
+
 Estimator::Estimator(const float& filter_corner, const float& filter_surf,
                      int max_iters, int ceres_max_iters,
                      double conv_r, double conv_t,
@@ -176,11 +181,14 @@ void Estimator::processPointToLine(std::vector<ceres::CostFunction *>& edges,
     // === 优化点4：RK3588 big.LITTLE 架构适配，chunk=16 更好负载均衡 ===
     #pragma omp for schedule(dynamic, 16) nowait
   for (int i = 0; i < laserCloudCornerStackNum; i++) {
+    if (i + 8 < laserCloudCornerStackNum) {
+      __builtin_prefetch(&laserCloudCorner->points[i + 8], 0, 1);
+    }
     _pointOri = laserCloudCorner->points[i];
     MAP_MANAGER::pointAssociateToMap(&_pointOri, &_pointSel, m4d);
     int id = map_manager->FindUsedCornerMap(&_pointSel,laserCenWidth_last,laserCenHeight_last,laserCenDepth_last);
 
-      if(id == 5000) continue;
+      if(UNLIKELY(id == 5000)) continue;
     if(std::isnan(_pointSel.x) || std::isnan(_pointSel.y) ||std::isnan(_pointSel.z)) continue;
 
       bool found_global = false;
@@ -309,10 +317,10 @@ void Estimator::processPointToPlan(std::vector<ceres::CostFunction *>& edges,
     return;
   }
   PointType _pointOri, _pointSel, _coeff;
-  std::vector<int> _pointSearchInd;
-  std::vector<float> _pointSearchSqDis;
-  std::vector<int> _pointSearchInd2;
-  std::vector<float> _pointSearchSqDis2;
+  std::vector<int> _pointSearchInd(5);
+  std::vector<float> _pointSearchSqDis(5);
+  std::vector<int> _pointSearchInd2(5);
+  std::vector<float> _pointSearchSqDis2(5);
 
   Eigen::Matrix< double, 5, 3 > _matA0;
   _matA0.setZero();
@@ -893,7 +901,7 @@ void Estimator::Estimate(std::list<LidarFrame>& lidarFrameList,
       GlobalSurfMap[i] = map_manager->laserCloudSurf_for_match[i];
       GlobalCornerMap[i] = map_manager->laserCloudCorner_for_match[i];
       GlobalNonFeatureMap[i] = map_manager->laserCloudNonFeature_for_match[i];
-    }
+  }
     laserCenWidth_last = map_manager->get_laserCloudCenWidth_last();
     laserCenHeight_last = map_manager->get_laserCloudCenHeight_last();
     laserCenDepth_last = map_manager->get_laserCloudCenDepth_last();
@@ -908,7 +916,7 @@ void Estimator::Estimate(std::list<LidarFrame>& lidarFrameList,
       GlobalSurfMap[i] = *(snapshot->surfPointMap[i]);
       GlobalCornerMap[i] = *(snapshot->cornerPointMap[i]);
       GlobalNonFeatureMap[i] = *(snapshot->nonFeaturePointMap[i]);
-    }
+  }
     laserCenWidth_last = snapshot->cenWidth;
     laserCenHeight_last = snapshot->cenHeight;
     laserCenDepth_last = snapshot->cenDepth;
@@ -1047,7 +1055,7 @@ void Estimator::Estimate(std::list<LidarFrame>& lidarFrameList,
     // 等待所有线程完成
     for(int i=0; i<totalThreads; ++i) {
       threads[i].join();
-    }
+      }
 
     int cntSurf = 0;
     int cntCorner = 0;
@@ -1162,8 +1170,8 @@ void Estimator::Estimate(std::list<LidarFrame>& lidarFrameList,
             cntFtu++;
             cntNon++;
           }
-        }
-      }
+            }
+          }
 
       // === 优化点5：退化检测（仅首次迭代统计）===
       if (iterOpt == 0) {
@@ -1184,8 +1192,8 @@ void Estimator::Estimate(std::list<LidarFrame>& lidarFrameList,
       options.parameter_tolerance = 1e-6;       // 参数收敛容差
       options.use_nonmonotonic_steps = true;    // 允许非单调步长（加速收敛）
       options.max_consecutive_nonmonotonic_steps = 4;
-      ceres::Solver::Summary summary;
-      ceres::Solve(options, &problem, &summary);
+    ceres::Solver::Summary summary;
+    ceres::Solve(options, &problem, &summary);
 
     double2vector(lidarFrameList);
 
@@ -1367,7 +1375,7 @@ void Estimator::MapIncrementLocal(const pcl::PointCloud<PointType>::Ptr& laserCl
     *laserCloudCornerFromLocal += *localCornerMap[i];
     *laserCloudSurfFromLocal += *localSurfMap[i];
     *laserCloudNonFeatureFromLocal += *localNonFeatureMap[i];
-  }
+    }
   
   // === 下采样（串行以避免线程问题）===
   pcl::PointCloud<PointType>::Ptr temp(new pcl::PointCloud<PointType>());

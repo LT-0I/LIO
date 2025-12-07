@@ -337,6 +337,10 @@ private:
 	int valid_corner_count_ = 0;
 	int valid_surf_count_ = 0;
 	void checkDegeneracy();
+	void initTimeLogger();
+
+	std::ofstream time_log_;
+	bool time_log_ready_{false};
 };
 
 #endif //LIO_LIVOX_ESTIMATOR_H

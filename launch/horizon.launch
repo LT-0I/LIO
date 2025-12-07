@@ -31,5 +31,5 @@
     </node>
 
     <!--node launch-prefix="nice" pkg="rviz" type="rviz" name="rviz" args="-d $(find lio_livox)/rviz_cfg/lio.rviz" /-->
-
+    <!--include file ="$(find serial_bridge)/launch/opi_sender.launch"/-->
 </launch>

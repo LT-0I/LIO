@@ -1310,12 +1310,14 @@ void Estimator::Estimate(std::list<LidarFrame>& lidarFrameList,
     TicToc t_stage_solve;
     t_stage_solve.tic();
       ceres::Solver::Options options;
-      options.linear_solver_type = ceres::DENSE_SCHUR;
+      // 仅绑定大核，避免小核拖慢同步
+      options.num_threads = 4;
+      // 稀疏结构更匹配的求解器（需 SuiteSparse/CXSparse）
+      options.linear_solver_type = ceres::SPARSE_NORMAL_CHOLESKY;
       options.trust_region_strategy_type = ceres::DOGLEG;
       options.max_num_iterations = ceres_max_iterations_;
       options.minimizer_progress_to_stdout = false;
-      options.num_threads = 8;  // RK3588: 4大核 + 4小核
-      // === 优化：Ceres 配置加速（不影响精度）===
+      // 收敛精度保持不变
       options.function_tolerance = 1e-5;        // 函数值收敛容差
       options.gradient_tolerance = 1e-8;        // 梯度收敛容差
       options.parameter_tolerance = 1e-6;       // 参数收敛容差

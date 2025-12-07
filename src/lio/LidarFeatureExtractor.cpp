@@ -106,6 +106,16 @@ void LidarFeatureExtractor::detectFeaturePoint(pcl::PointCloud<PointType>::Ptr& 
   pcl::PointCloud<PointType>::Ptr _laserCloud(new pcl::PointCloud<PointType>());
   _laserCloud->reserve(cloudSize);
 
+  // SoA 紧凑缓存，便于连续访问与向量化
+  std::vector<float> xs;
+  std::vector<float> ys;
+  std::vector<float> zs;
+  std::vector<float> ints;
+  xs.reserve(cloudSize);
+  ys.reserve(cloudSize);
+  zs.reserve(cloudSize);
+  ints.reserve(cloudSize);
+
   for (int i = 0; i < cloudSize; i++) {
     point.x = laserCloudIn->points[i].x;
     point.y = laserCloudIn->points[i].y;
@@ -124,7 +134,12 @@ void LidarFeatureExtractor::detectFeaturePoint(pcl::PointCloud<PointType>::Ptr& 
     }
 
     _laserCloud->push_back(point);
-    CloudFeatureFlag[i] = 0;
+    const int idx = static_cast<int>(_laserCloud->size()) - 1;
+    CloudFeatureFlag[idx] = 0;
+    xs.push_back(point.x);
+    ys.push_back(point.y);
+    zs.push_back(point.z);
+    ints.push_back(point.intensity);
   }
 
   cloudSize = _laserCloud->size();
@@ -151,16 +166,22 @@ void LidarFeatureExtractor::detectFeaturePoint(pcl::PointCloud<PointType>::Ptr& 
     float diffY = 0;
     float diffZ = 0;
 
-    float dis = sqrt(_laserCloud->points[i].x * _laserCloud->points[i].x +
-                     _laserCloud->points[i].y * _laserCloud->points[i].y +
-                     _laserCloud->points[i].z * _laserCloud->points[i].z);
+    const float xi = xs[i];
+    const float yi = ys[i];
+    const float zi = zs[i];
+    const float dis = std::sqrt(xi*xi + yi*yi + zi*zi);
 
-    Eigen::Vector3d pt_last(_laserCloud->points[i-1].x, _laserCloud->points[i-1].y, _laserCloud->points[i-1].z);
-    Eigen::Vector3d pt_cur(_laserCloud->points[i].x, _laserCloud->points[i].y, _laserCloud->points[i].z);
-    Eigen::Vector3d pt_next(_laserCloud->points[i+1].x, _laserCloud->points[i+1].y, _laserCloud->points[i+1].z);
-
-    double angle_last = (pt_last-pt_cur).dot(pt_cur) / ((pt_last-pt_cur).norm()*pt_cur.norm());
-    double angle_next = (pt_next-pt_cur).dot(pt_cur) / ((pt_next-pt_cur).norm()*pt_cur.norm());
+    const float dx_last = xs[i-1] - xi;
+    const float dy_last = ys[i-1] - yi;
+    const float dz_last = zs[i-1] - zi;
+    const float dx_next = xs[i+1] - xi;
+    const float dy_next = ys[i+1] - yi;
+    const float dz_next = zs[i+1] - zi;
+    const float norm_last = std::sqrt(dx_last*dx_last + dy_last*dy_last + dz_last*dz_last) + 1e-6f;
+    const float norm_next = std::sqrt(dx_next*dx_next + dy_next*dy_next + dz_next*dz_next) + 1e-6f;
+    const float norm_cur  = std::max(std::sqrt(xi*xi + yi*yi + zi*zi), 1e-6f);
+    const float angle_last = (dx_last*xi + dy_last*yi + dz_last*zi) / (norm_last * norm_cur);
+    const float angle_next = (dx_next*xi + dy_next*yi + dz_next*zi) / (norm_next * norm_cur);
  
     if (dis > thDistanceFaraway || (fabs(angle_last) > 0.966 && fabs(angle_next) > 0.966)) {
       thNumCurvSize = 2;
@@ -172,16 +193,16 @@ void LidarFeatureExtractor::detectFeaturePoint(pcl::PointCloud<PointType>::Ptr& 
       cloudAngle[i] = 1;
     }
 
-    float diffR = -2 * thNumCurvSize * _laserCloud->points[i].intensity;
+    float diffR = -2 * thNumCurvSize * ints[i];
     for (int j = 1; j <= thNumCurvSize; ++j) {
-      diffX += _laserCloud->points[i - j].x + _laserCloud->points[i + j].x;
-      diffY += _laserCloud->points[i - j].y + _laserCloud->points[i + j].y;
-      diffZ += _laserCloud->points[i - j].z + _laserCloud->points[i + j].z;
-      diffR += _laserCloud->points[i - j].intensity + _laserCloud->points[i + j].intensity;
+      diffX += xs[i - j] + xs[i + j];
+      diffY += ys[i - j] + ys[i + j];
+      diffZ += zs[i - j] + zs[i + j];
+      diffR += ints[i - j] + ints[i + j];
     }
-    diffX -= 2 * thNumCurvSize * _laserCloud->points[i].x;
-    diffY -= 2 * thNumCurvSize * _laserCloud->points[i].y;
-    diffZ -= 2 * thNumCurvSize * _laserCloud->points[i].z;
+    diffX -= 2 * thNumCurvSize * xi;
+    diffY -= 2 * thNumCurvSize * yi;
+    diffZ -= 2 * thNumCurvSize * zi;
 
     cloudDepth[i] = dis;
     cloudCurvature[i] = diffX * diffX + diffY * diffY + diffZ * diffZ;// / (2 * thNumCurvSize * dis + 1e-3);
@@ -191,38 +212,34 @@ void LidarFeatureExtractor::detectFeaturePoint(pcl::PointCloud<PointType>::Ptr& 
 
   }
 
+  // 预分配索引缓冲，避免重复分配
+  static thread_local std::vector<int> curvature_idx;
+  static thread_local std::vector<int> reflect_idx;
+
+  #pragma omp parallel for schedule(static)
   for (int j = 0; j < thPartNum; j++) {
     int sp = scanStartInd + (scanEndInd - scanStartInd) * j / thPartNum;
     int ep = scanStartInd + (scanEndInd - scanStartInd) * (j + 1) / thPartNum - 1;
 
-    // sort the curvatures from small to large
-    for (int k = sp + 1; k <= ep; k++) {
-      for (int l = k; l >= sp + 1; l--) {
-        if (cloudCurvature[cloudSortInd[l]] <
-            cloudCurvature[cloudSortInd[l - 1]]) {
-          int temp = cloudSortInd[l - 1];
-          cloudSortInd[l - 1] = cloudSortInd[l];
-          cloudSortInd[l] = temp;
-        }
-      }
+    const int seg_len = ep - sp + 1;
+    curvature_idx.resize(seg_len);
+    reflect_idx.resize(seg_len);
+    for (int k = 0; k < seg_len; ++k) {
+      curvature_idx[k] = sp + k;
+      reflect_idx[k] = sp + k;
     }
 
-    // sort the reflectivity from small to large
-    for (int k = sp + 1; k <= ep; k++) {
-      for (int l = k; l >= sp + 1; l--) {
-        if (cloudReflect[reflectSortInd[l]] <
-            cloudReflect[reflectSortInd[l - 1]]) {
-          int temp = reflectSortInd[l - 1];
-          reflectSortInd[l - 1] = reflectSortInd[l];
-          reflectSortInd[l] = temp;
-        }
-      }
-    }
+    std::sort(curvature_idx.begin(), curvature_idx.end(), [&](int a, int b){
+      return cloudCurvature[a] < cloudCurvature[b];
+    });
+    std::sort(reflect_idx.begin(), reflect_idx.end(), [&](int a, int b){
+      return cloudReflect[a] < cloudReflect[b];
+    });
 
     int smallestPickedNum = 1;
     int sharpestPickedNum = 1;
-    for (int k = sp; k <= ep; k++) {
-      int ind = cloudSortInd[k];
+    for (int k = 0; k < seg_len; k++) {
+      int ind = curvature_idx[k];
 
       if (CloudFeatureFlag[ind] != 0) continue;
 
@@ -231,12 +248,9 @@ void LidarFeatureExtractor::detectFeaturePoint(pcl::PointCloud<PointType>::Ptr& 
         CloudFeatureFlag[ind] = 3;
 
         for (int l = 1; l <= thNumCurvSize; l++) {
-          float diffX = _laserCloud->points[ind + l].x -
-                        _laserCloud->points[ind + l - 1].x;
-          float diffY = _laserCloud->points[ind + l].y -
-                        _laserCloud->points[ind + l - 1].y;
-          float diffZ = _laserCloud->points[ind + l].z -
-                        _laserCloud->points[ind + l - 1].z;
+          float diffX = xs[ind + l] - xs[ind + l - 1];
+          float diffY = ys[ind + l] - ys[ind + l - 1];
+          float diffZ = zs[ind + l] - zs[ind + l - 1];
           if (diffX * diffX + diffY * diffY + diffZ * diffZ > 0.02 || cloudDepth[ind] > thDistanceFaraway) {
             break;
           }
@@ -244,12 +258,9 @@ void LidarFeatureExtractor::detectFeaturePoint(pcl::PointCloud<PointType>::Ptr& 
           CloudFeatureFlag[ind + l] = 1;
         }
         for (int l = -1; l >= -thNumCurvSize; l--) {
-          float diffX = _laserCloud->points[ind + l].x -
-                        _laserCloud->points[ind + l + 1].x;
-          float diffY = _laserCloud->points[ind + l].y -
-                        _laserCloud->points[ind + l + 1].y;
-          float diffZ = _laserCloud->points[ind + l].z -
-                        _laserCloud->points[ind + l + 1].z;
+          float diffX = xs[ind + l] - xs[ind + l + 1];
+          float diffY = ys[ind + l] - ys[ind + l + 1];
+          float diffZ = zs[ind + l] - zs[ind + l + 1];
           if (diffX * diffX + diffY * diffY + diffZ * diffZ > 0.02 || cloudDepth[ind] > thDistanceFaraway) {
             break;
           }
@@ -271,7 +282,7 @@ void LidarFeatureExtractor::detectFeaturePoint(pcl::PointCloud<PointType>::Ptr& 
         }
       }
 
-      int idx = reflectSortInd[k];
+      int idx = reflect_idx[k];
       if(cloudCurvature[idx] < 0.7 * thFlatThreshold * cloudDepth[idx] * thFlatThreshold * cloudDepth[idx]
          && sharpestPickedNum <= 3 && cloudReflect[idx] > 20.0){
         sharpestPickedNum ++;
@@ -431,23 +442,8 @@ void LidarFeatureExtractor::detectFeaturePoint(pcl::PointCloud<PointType>::Ptr& 
         //calculate the angle between the laser direction and the surface
         double cc = fabs( surf_vector.dot(lidar_vector) / (surf_vector.norm()*lidar_vector.norm()) );
 
-        std::vector<PointType> left_list;
-        double min_dis = 10000;
-        double max_dis = 0;
-        for(int j = 0; j < 4; j++){   //TODO: change the plane window size and add thin rod support
-          left_list.push_back(_laserCloud->points[i - j]);
-          Eigen::Vector3d temp_vector = Eigen::Vector3d(_laserCloud->points[i - j].x - _laserCloud->points[i - j - 1].x,
-                                                        _laserCloud->points[i - j].y - _laserCloud->points[i - j - 1].y,
-                                                        _laserCloud->points[i - j].z - _laserCloud->points[i - j - 1].z);
-
-          if(j == 3) break;
-          double temp_dis = temp_vector.norm();
-          if(temp_dis < min_dis) min_dis = temp_dis;
-          if(temp_dis > max_dis) max_dis = temp_dis;
-        }
-        bool left_is_plane = plane_judge(left_list,100);
-
-        if( cc < 0.95 ){//(max_dis < 2*min_dis) && left_surf_dis < 0.05 * depth  && left_is_plane &&
+        // 轻量判定：仅基于角度与深度，无需SVD
+        if( cc < 0.95 ){
           if(depth_right > depth_left){
             CloudFeatureFlag[i] = 100;
           }
@@ -468,23 +464,7 @@ void LidarFeatureExtractor::detectFeaturePoint(pcl::PointCloud<PointType>::Ptr& 
         //calculate the angle between the laser direction and the surface
         double cc = fabs( surf_vector.dot(lidar_vector) / (surf_vector.norm()*lidar_vector.norm()) );
 
-        std::vector<PointType> right_list;
-        double min_dis = 10000;
-        double max_dis = 0;
-        for(int j = 0; j < 4; j++){ //TODO: change the plane window size and add thin rod support
-          right_list.push_back(_laserCloud->points[i - j]);
-          Eigen::Vector3d temp_vector = Eigen::Vector3d(_laserCloud->points[i + j].x - _laserCloud->points[i + j + 1].x,
-                                                        _laserCloud->points[i + j].y - _laserCloud->points[i + j + 1].y,
-                                                        _laserCloud->points[i + j].z - _laserCloud->points[i + j + 1].z);
-
-          if(j == 3) break;
-          double temp_dis = temp_vector.norm();
-          if(temp_dis < min_dis) min_dis = temp_dis;
-          if(temp_dis > max_dis) max_dis = temp_dis;
-        }
-        bool right_is_plane = plane_judge(right_list,100);
-
-        if( cc < 0.95){ //right_is_plane  && (max_dis < 2*min_dis) && right_surf_dis < 0.05 * depth &&
+        if( cc < 0.95){
 
           if(depth_right < depth_left){
             CloudFeatureFlag[i] = 100;

@@ -95,8 +95,8 @@ class OdomRecorder:
             return
         
         # 基本信息
-            first = self.poses[0].split()
-            last = self.poses[-1].split()
+        first = self.poses[0].split()
+        last = self.poses[-1].split()
         bag_duration = float(last[0]) - float(first[0])
         
         print("\n" + "=" * 65)

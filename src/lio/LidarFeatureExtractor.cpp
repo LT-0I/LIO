@@ -106,15 +106,12 @@ void LidarFeatureExtractor::detectFeaturePoint(pcl::PointCloud<PointType>::Ptr& 
   pcl::PointCloud<PointType>::Ptr _laserCloud(new pcl::PointCloud<PointType>());
   _laserCloud->reserve(cloudSize);
 
-  // SoA 紧凑缓存，便于连续访问与向量化
-  std::vector<float> xs;
-  std::vector<float> ys;
-  std::vector<float> zs;
-  std::vector<float> ints;
-  xs.reserve(cloudSize);
-  ys.reserve(cloudSize);
-  zs.reserve(cloudSize);
-  ints.reserve(cloudSize);
+  // SoA 缓冲跨帧复用，避免反复分配
+  xs_.clear(); ys_.clear(); zs_.clear(); ints_.clear();
+  xs_.reserve(cloudSize);
+  ys_.reserve(cloudSize);
+  zs_.reserve(cloudSize);
+  ints_.reserve(cloudSize);
 
   for (int i = 0; i < cloudSize; i++) {
     point.x = laserCloudIn->points[i].x;
@@ -136,10 +133,10 @@ void LidarFeatureExtractor::detectFeaturePoint(pcl::PointCloud<PointType>::Ptr& 
     _laserCloud->push_back(point);
     const int idx = static_cast<int>(_laserCloud->size()) - 1;
     CloudFeatureFlag[idx] = 0;
-    xs.push_back(point.x);
-    ys.push_back(point.y);
-    zs.push_back(point.z);
-    ints.push_back(point.intensity);
+    xs_.push_back(point.x);
+    ys_.push_back(point.y);
+    zs_.push_back(point.z);
+    ints_.push_back(point.intensity);
   }
 
   cloudSize = _laserCloud->size();
@@ -166,17 +163,17 @@ void LidarFeatureExtractor::detectFeaturePoint(pcl::PointCloud<PointType>::Ptr& 
     float diffY = 0;
     float diffZ = 0;
 
-    const float xi = xs[i];
-    const float yi = ys[i];
-    const float zi = zs[i];
+    const float xi = xs_[i];
+    const float yi = ys_[i];
+    const float zi = zs_[i];
     const float dis = std::sqrt(xi*xi + yi*yi + zi*zi);
 
-    const float dx_last = xs[i-1] - xi;
-    const float dy_last = ys[i-1] - yi;
-    const float dz_last = zs[i-1] - zi;
-    const float dx_next = xs[i+1] - xi;
-    const float dy_next = ys[i+1] - yi;
-    const float dz_next = zs[i+1] - zi;
+    const float dx_last = xs_[i-1] - xi;
+    const float dy_last = ys_[i-1] - yi;
+    const float dz_last = zs_[i-1] - zi;
+    const float dx_next = xs_[i+1] - xi;
+    const float dy_next = ys_[i+1] - yi;
+    const float dz_next = zs_[i+1] - zi;
     const float norm_last = std::sqrt(dx_last*dx_last + dy_last*dy_last + dz_last*dz_last) + 1e-6f;
     const float norm_next = std::sqrt(dx_next*dx_next + dy_next*dy_next + dz_next*dz_next) + 1e-6f;
     const float norm_cur  = std::max(std::sqrt(xi*xi + yi*yi + zi*zi), 1e-6f);
@@ -193,12 +190,12 @@ void LidarFeatureExtractor::detectFeaturePoint(pcl::PointCloud<PointType>::Ptr& 
       cloudAngle[i] = 1;
     }
 
-    float diffR = -2 * thNumCurvSize * ints[i];
+    float diffR = -2 * thNumCurvSize * ints_[i];
     for (int j = 1; j <= thNumCurvSize; ++j) {
-      diffX += xs[i - j] + xs[i + j];
-      diffY += ys[i - j] + ys[i + j];
-      diffZ += zs[i - j] + zs[i + j];
-      diffR += ints[i - j] + ints[i + j];
+      diffX += xs_[i - j] + xs_[i + j];
+      diffY += ys_[i - j] + ys_[i + j];
+      diffZ += zs_[i - j] + zs_[i + j];
+      diffR += ints_[i - j] + ints_[i + j];
     }
     diffX -= 2 * thNumCurvSize * xi;
     diffY -= 2 * thNumCurvSize * yi;
@@ -248,9 +245,9 @@ void LidarFeatureExtractor::detectFeaturePoint(pcl::PointCloud<PointType>::Ptr& 
         CloudFeatureFlag[ind] = 3;
 
         for (int l = 1; l <= thNumCurvSize; l++) {
-          float diffX = xs[ind + l] - xs[ind + l - 1];
-          float diffY = ys[ind + l] - ys[ind + l - 1];
-          float diffZ = zs[ind + l] - zs[ind + l - 1];
+          float diffX = xs_[ind + l] - xs_[ind + l - 1];
+          float diffY = ys_[ind + l] - ys_[ind + l - 1];
+          float diffZ = zs_[ind + l] - zs_[ind + l - 1];
           if (diffX * diffX + diffY * diffY + diffZ * diffZ > 0.02 || cloudDepth[ind] > thDistanceFaraway) {
             break;
           }
@@ -258,9 +255,9 @@ void LidarFeatureExtractor::detectFeaturePoint(pcl::PointCloud<PointType>::Ptr& 
           CloudFeatureFlag[ind + l] = 1;
         }
         for (int l = -1; l >= -thNumCurvSize; l--) {
-          float diffX = xs[ind + l] - xs[ind + l + 1];
-          float diffY = ys[ind + l] - ys[ind + l + 1];
-          float diffZ = zs[ind + l] - zs[ind + l + 1];
+          float diffX = xs_[ind + l] - xs_[ind + l + 1];
+          float diffY = ys_[ind + l] - ys_[ind + l + 1];
+          float diffZ = zs_[ind + l] - zs_[ind + l + 1];
           if (diffX * diffX + diffY * diffY + diffZ * diffZ > 0.02 || cloudDepth[ind] > thDistanceFaraway) {
             break;
           }

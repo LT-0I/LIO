@@ -266,6 +266,9 @@ void Estimator::processPointToLine(std::vector<ceres::CostFunction *>& edges,
       if(gpc && gkd && gpc->points.size() > 100) {
         gkd->nearestKSearch(_pointSel, 5, knn_idx_global, knn_dist_global);
         for(int j=0;j<5;++j){ _pointSearchInd[j]=knn_idx_global[j]; _pointSearchSqDis[j]=knn_dist_global[j]; }
+
+      // 距离粗筛，避免无效拟合
+      if (_pointSearchSqDis[4] >= thres_dist) continue;
       
       if (_pointSearchSqDis[4] < thres_dist) {
           float cx = 0, cy = 0, cz = 0;
@@ -433,6 +436,11 @@ void Estimator::processPointToPlan(std::vector<ceres::CostFunction *>& edges,
     if(gspc && gskd && gspc->points.size() > 50) {
       gskd->nearestKSearch(_pointSel, 5, knn_idx_global, knn_dist_global);
       for(int j=0;j<5;++j){ _pointSearchInd[j]=knn_idx_global[j]; _pointSearchSqDis[j]=knn_dist_global[j]; }
+
+      // 距离粗筛，避免无效平面拟合
+      if (_pointSearchSqDis[4] >= 1.0) {
+        continue;
+      }
 
       if (_pointSearchSqDis[4] < 1.0) {
         const PointType* __restrict__ gpts = gspc->points.data();
@@ -792,6 +800,7 @@ void Estimator::processNonFeatureICP(std::vector<ceres::CostFunction *>& edges,
       if(gnpc && gnkd && gnpc->points.size() > 100) {
         gnkd->nearestKSearch(_pointSel, 5, knn_idx_global, knn_dist_global);
         for(int j=0;j<5;++j){ _pointSearchInd[j]=knn_idx_global[j]; _pointSearchSqDis[j]=knn_dist_global[j]; }
+        if (_pointSearchSqDis[4] >= thres_dist) continue;
         if (_pointSearchSqDis[4] < thres_dist) {
           const PointType* __restrict__ gpts = gnpc->points.data();
         for (int j = 0; j < 5; j++) {

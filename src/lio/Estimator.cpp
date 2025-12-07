@@ -172,10 +172,15 @@ void Estimator::processPointToLine(std::vector<ceres::CostFunction *>& edges,
     int tid = omp_get_thread_num();
     // 线程私有变量
     PointType _pointOri, _pointSel;
-    std::vector<int> _pointSearchInd(5);
-    std::vector<float> _pointSearchSqDis(5);
-    std::vector<int> _pointSearchInd2(5);
-    std::vector<float> _pointSearchSqDis2(5);
+    std::array<int,5>   _pointSearchInd{};
+    std::array<float,5> _pointSearchSqDis{};
+    std::array<int,5>   _pointSearchInd2{};
+    std::array<float,5> _pointSearchSqDis2{};
+    // KdTree 接口仍要求 std::vector，使用小向量接收后拷贝到 std::array
+    std::vector<int> knn_idx_global(5);
+    std::vector<float> knn_dist_global(5);
+    std::vector<int> knn_idx_local(5);
+    std::vector<float> knn_dist_local(5);
     Eigen::Matrix3d _matA1;
 
     // === 优化点4：RK3588 big.LITTLE 架构适配，chunk=16 更好负载均衡 ===
@@ -193,22 +198,28 @@ void Estimator::processPointToLine(std::vector<ceres::CostFunction *>& edges,
 
       bool found_global = false;
       if(GlobalCornerMap[id].points.size() > 100) {
-        CornerKdMap[id].nearestKSearch(_pointSel, 5, _pointSearchInd, _pointSearchSqDis);
+        CornerKdMap[id].nearestKSearch(_pointSel, 5, knn_idx_global, knn_dist_global);
+        for(int j=0;j<5;++j){ _pointSearchInd[j]=knn_idx_global[j]; _pointSearchSqDis[j]=knn_dist_global[j]; }
       
-        if (_pointSearchSqDis.size() >= 5 && _pointSearchSqDis[4] < thres_dist) {
+      if (_pointSearchSqDis[4] < thres_dist) {
           float cx = 0, cy = 0, cz = 0;
+          const PointType* __restrict__ gpts = GlobalCornerMap[id].points.data();
+          #pragma GCC unroll 5
         for (int j = 0; j < 5; j++) {
-            cx += GlobalCornerMap[id].points[_pointSearchInd[j]].x;
-            cy += GlobalCornerMap[id].points[_pointSearchInd[j]].y;
-            cz += GlobalCornerMap[id].points[_pointSearchInd[j]].z;
+            const auto& pj = gpts[_pointSearchInd[j]];
+            cx += pj.x;
+            cy += pj.y;
+            cz += pj.z;
       }
           cx /= 5; cy /= 5; cz /= 5;
 
           float a11 = 0, a12 = 0, a13 = 0, a22 = 0, a23 = 0, a33 = 0;
+          #pragma GCC unroll 5
         for (int j = 0; j < 5; j++) {
-            float ax = GlobalCornerMap[id].points[_pointSearchInd[j]].x - cx;
-            float ay = GlobalCornerMap[id].points[_pointSearchInd[j]].y - cy;
-            float az = GlobalCornerMap[id].points[_pointSearchInd[j]].z - cz;
+            const auto& pj = gpts[_pointSearchInd[j]];
+            float ax = pj.x - cx;
+            float ay = pj.y - cy;
+            float az = pj.z - cz;
             a11 += ax * ax; a12 += ax * ay; a13 += ax * az;
             a22 += ay * ay; a23 += ay * az; a33 += az * az;
       }
@@ -240,21 +251,27 @@ void Estimator::processPointToLine(std::vector<ceres::CostFunction *>& edges,
       }
 
       if(!found_global && localCloudSize > 20){
-      kdtreeLocal->nearestKSearch(_pointSel, 5, _pointSearchInd2, _pointSearchSqDis2);
+      kdtreeLocal->nearestKSearch(_pointSel, 5, knn_idx_local, knn_dist_local);
+      for(int j=0;j<5;++j){ _pointSearchInd2[j]=knn_idx_local[j]; _pointSearchSqDis2[j]=knn_dist_local[j]; }
       if (_pointSearchSqDis2[4] < thres_dist) {
           float cx = 0, cy = 0, cz = 0;
+          const PointType* __restrict__ lpts = laserCloudCornerLocal->points.data();
+          #pragma GCC unroll 5
         for (int j = 0; j < 5; j++) {
-          cx += laserCloudCornerLocal->points[_pointSearchInd2[j]].x;
-          cy += laserCloudCornerLocal->points[_pointSearchInd2[j]].y;
-          cz += laserCloudCornerLocal->points[_pointSearchInd2[j]].z;
+          const auto& pj = lpts[_pointSearchInd2[j]];
+          cx += pj.x;
+          cy += pj.y;
+          cz += pj.z;
         }
           cx /= 5; cy /= 5; cz /= 5;
 
           float a11 = 0, a12 = 0, a13 = 0, a22 = 0, a23 = 0, a33 = 0;
+          #pragma GCC unroll 5
         for (int j = 0; j < 5; j++) {
-          float ax = laserCloudCornerLocal->points[_pointSearchInd2[j]].x - cx;
-          float ay = laserCloudCornerLocal->points[_pointSearchInd2[j]].y - cy;
-          float az = laserCloudCornerLocal->points[_pointSearchInd2[j]].z - cz;
+          const auto& pj = lpts[_pointSearchInd2[j]];
+          float ax = pj.x - cx;
+          float ay = pj.y - cy;
+          float az = pj.z - cz;
             a11 += ax * ax; a12 += ax * ay; a13 += ax * az;
             a22 += ay * ay; a23 += ay * az; a33 += az * az;
         }
@@ -317,10 +334,14 @@ void Estimator::processPointToPlan(std::vector<ceres::CostFunction *>& edges,
     return;
   }
   PointType _pointOri, _pointSel, _coeff;
-  std::vector<int> _pointSearchInd(5);
-  std::vector<float> _pointSearchSqDis(5);
-  std::vector<int> _pointSearchInd2(5);
-  std::vector<float> _pointSearchSqDis2(5);
+  std::array<int,5>   _pointSearchInd{};
+  std::array<float,5> _pointSearchSqDis{};
+  std::array<int,5>   _pointSearchInd2{};
+  std::array<float,5> _pointSearchSqDis2{};
+  std::vector<int> knn_idx_global(5);
+  std::vector<float> knn_dist_global(5);
+  std::vector<int> knn_idx_local(5);
+  std::vector<float> knn_dist_local(5);
 
   Eigen::Matrix< double, 5, 3 > _matA0;
   _matA0.setZero();
@@ -346,14 +367,17 @@ void Estimator::processPointToPlan(std::vector<ceres::CostFunction *>& edges,
     if(std::isnan(_pointSel.x) || std::isnan(_pointSel.y) ||std::isnan(_pointSel.z)) continue;
 
     if(GlobalSurfMap[id].points.size() > 50) {
-      SurfKdMap[id].nearestKSearch(_pointSel, 5, _pointSearchInd, _pointSearchSqDis);
+      SurfKdMap[id].nearestKSearch(_pointSel, 5, knn_idx_global, knn_dist_global);
+      for(int j=0;j<5;++j){ _pointSearchInd[j]=knn_idx_global[j]; _pointSearchSqDis[j]=knn_dist_global[j]; }
 
-      if (_pointSearchSqDis.size() >= 5 && _pointSearchSqDis[4] < 1.0) {
+      if (_pointSearchSqDis[4] < 1.0) {
         debug_num1 ++;
+        const PointType* __restrict__ gpts = GlobalSurfMap[id].points.data();
         for (int j = 0; j < 5; j++) {
-          _matA0(j, 0) = GlobalSurfMap[id].points[_pointSearchInd[j]].x;
-          _matA0(j, 1) = GlobalSurfMap[id].points[_pointSearchInd[j]].y;
-          _matA0(j, 2) = GlobalSurfMap[id].points[_pointSearchInd[j]].z;
+          const auto& pj = gpts[_pointSearchInd[j]];
+          _matA0(j, 0) = pj.x;
+          _matA0(j, 1) = pj.y;
+          _matA0(j, 2) = pj.z;
         }
         _matX0 = _matA0.colPivHouseholderQr().solve(_matB0);
 
@@ -373,9 +397,8 @@ void Estimator::processPointToPlan(std::vector<ceres::CostFunction *>& edges,
 
         bool planeValid = true;
         for (int j = 0; j < 5; j++) {
-          if (std::fabs(pa * GlobalSurfMap[id].points[_pointSearchInd[j]].x +
-                        pb * GlobalSurfMap[id].points[_pointSearchInd[j]].y +
-                        pc * GlobalSurfMap[id].points[_pointSearchInd[j]].z + pd) > 0.2) {
+          const auto& pj = gpts[_pointSearchInd[j]];
+          if (std::fabs(pa * pj.x + pb * pj.y + pc * pj.z + pd) > 0.2) {
             planeValid = false;
             break;
           }
@@ -404,13 +427,16 @@ void Estimator::processPointToPlan(std::vector<ceres::CostFunction *>& edges,
       }
     }
     if(laserCloudSurfLocal->points.size() > 20 ){
-    kdtreeLocal->nearestKSearch(_pointSel, 5, _pointSearchInd2, _pointSearchSqDis2);
+    kdtreeLocal->nearestKSearch(_pointSel, 5, knn_idx_local, knn_dist_local);
+    for(int j=0;j<5;++j){ _pointSearchInd2[j]=knn_idx_local[j]; _pointSearchSqDis2[j]=knn_dist_local[j]; }
     if (_pointSearchSqDis2[4] < 1.0) {
       debug_num2++;
+      const PointType* __restrict__ lpts = laserCloudSurfLocal->points.data();
       for (int j = 0; j < 5; j++) { 
-        _matA0(j, 0) = laserCloudSurfLocal->points[_pointSearchInd2[j]].x;
-        _matA0(j, 1) = laserCloudSurfLocal->points[_pointSearchInd2[j]].y;
-        _matA0(j, 2) = laserCloudSurfLocal->points[_pointSearchInd2[j]].z;
+        const auto& pj = lpts[_pointSearchInd2[j]];
+        _matA0(j, 0) = pj.x;
+        _matA0(j, 1) = pj.y;
+        _matA0(j, 2) = pj.z;
       }
       _matX0 = _matA0.colPivHouseholderQr().solve(_matB0);
 
@@ -427,9 +453,8 @@ void Estimator::processPointToPlan(std::vector<ceres::CostFunction *>& edges,
 
       bool planeValid = true;
       for (int j = 0; j < 5; j++) {
-        if (std::fabs(pa * laserCloudSurfLocal->points[_pointSearchInd2[j]].x +
-                      pb * laserCloudSurfLocal->points[_pointSearchInd2[j]].y +
-                      pc * laserCloudSurfLocal->points[_pointSearchInd2[j]].z + pd) > 0.2) {
+          const auto& pj = lpts[_pointSearchInd2[j]];
+          if (std::fabs(pa * pj.x + pb * pj.y + pc * pj.z + pd) > 0.2) {
           planeValid = false;
           break;
         }
@@ -497,10 +522,14 @@ void Estimator::processPointToPlanVec(std::vector<ceres::CostFunction *>& edges,
     int tid = omp_get_thread_num();
     // 线程私有变量
     PointType _pointOri, _pointSel;
-    std::vector<int> _pointSearchInd(5);
-    std::vector<float> _pointSearchSqDis(5);
-    std::vector<int> _pointSearchInd2(5);
-    std::vector<float> _pointSearchSqDis2(5);
+    std::array<int,5>   _pointSearchInd{};
+    std::array<float,5> _pointSearchSqDis{};
+    std::array<int,5>   _pointSearchInd2{};
+    std::array<float,5> _pointSearchSqDis2{};
+    std::vector<int> knn_idx_global(5);
+    std::vector<float> knn_dist_global(5);
+    std::vector<int> knn_idx_local(5);
+    std::vector<float> knn_dist_local(5);
     Eigen::Matrix<double, 5, 3> _matA0;
     Eigen::Matrix<double, 5, 1> _matB0;
     _matB0.setOnes(); _matB0 *= -1;
@@ -518,13 +547,16 @@ void Estimator::processPointToPlanVec(std::vector<ceres::CostFunction *>& edges,
 
       bool found_global = false;
       if(GlobalSurfMap[id].points.size() > 50) {
-        SurfKdMap[id].nearestKSearch(_pointSel, 5, _pointSearchInd, _pointSearchSqDis);
+        SurfKdMap[id].nearestKSearch(_pointSel, 5, knn_idx_global, knn_dist_global);
+        for(int j=0;j<5;++j){ _pointSearchInd[j]=knn_idx_global[j]; _pointSearchSqDis[j]=knn_dist_global[j]; }
 
-        if (_pointSearchSqDis.size() >= 5 && _pointSearchSqDis[4] < thres_dist) {
+      if (_pointSearchSqDis[4] < thres_dist) {
+          const PointType* __restrict__ gpts = GlobalSurfMap[id].points.data();
         for (int j = 0; j < 5; j++) {
-            _matA0(j, 0) = GlobalSurfMap[id].points[_pointSearchInd[j]].x;
-            _matA0(j, 1) = GlobalSurfMap[id].points[_pointSearchInd[j]].y;
-            _matA0(j, 2) = GlobalSurfMap[id].points[_pointSearchInd[j]].z;
+            const auto& pj = gpts[_pointSearchInd[j]];
+            _matA0(j, 0) = pj.x;
+            _matA0(j, 1) = pj.y;
+            _matA0(j, 2) = pj.z;
         }
         _matX0 = _matA0.colPivHouseholderQr().solve(_matB0);
 
@@ -535,9 +567,10 @@ void Estimator::processPointToPlanVec(std::vector<ceres::CostFunction *>& edges,
 
         bool planeValid = true;
         for (int j = 0; j < 5; j++) {
-            if (std::fabs(pa * GlobalSurfMap[id].points[_pointSearchInd[j]].x +
-                          pb * GlobalSurfMap[id].points[_pointSearchInd[j]].y +
-                          pc * GlobalSurfMap[id].points[_pointSearchInd[j]].z + pd) > 0.2) {
+            const auto& pj = gpts[_pointSearchInd[j]];
+            if (std::fabs(pa * pj.x +
+                          pb * pj.y +
+                          pc * pj.z + pd) > 0.2) {
             planeValid = false;
             break;
           }
@@ -567,12 +600,15 @@ void Estimator::processPointToPlanVec(std::vector<ceres::CostFunction *>& edges,
     }
 
       if(!found_global && localCloudSize > 20){
-    kdtreeLocal->nearestKSearch(_pointSel, 5, _pointSearchInd2, _pointSearchSqDis2);
+    kdtreeLocal->nearestKSearch(_pointSel, 5, knn_idx_local, knn_dist_local);
+    for(int j=0;j<5;++j){ _pointSearchInd2[j]=knn_idx_local[j]; _pointSearchSqDis2[j]=knn_dist_local[j]; }
     if (_pointSearchSqDis2[4] < thres_dist) {
+      const PointType* __restrict__ lpts = laserCloudSurfLocal->points.data();
       for (int j = 0; j < 5; j++) { 
-        _matA0(j, 0) = laserCloudSurfLocal->points[_pointSearchInd2[j]].x;
-        _matA0(j, 1) = laserCloudSurfLocal->points[_pointSearchInd2[j]].y;
-        _matA0(j, 2) = laserCloudSurfLocal->points[_pointSearchInd2[j]].z;
+        const auto& pj = lpts[_pointSearchInd2[j]];
+        _matA0(j, 0) = pj.x;
+        _matA0(j, 1) = pj.y;
+        _matA0(j, 2) = pj.z;
       }
       _matX0 = _matA0.colPivHouseholderQr().solve(_matB0);
 
@@ -583,9 +619,10 @@ void Estimator::processPointToPlanVec(std::vector<ceres::CostFunction *>& edges,
 
       bool planeValid = true;
       for (int j = 0; j < 5; j++) {
-        if (std::fabs(pa * laserCloudSurfLocal->points[_pointSearchInd2[j]].x +
-                      pb * laserCloudSurfLocal->points[_pointSearchInd2[j]].y +
-                      pc * laserCloudSurfLocal->points[_pointSearchInd2[j]].z + pd) > 0.2) {
+        const auto& pj = lpts[_pointSearchInd2[j]];
+        if (std::fabs(pa * pj.x +
+                      pb * pj.y +
+                      pc * pj.z + pd) > 0.2) {
           planeValid = false;
           break;
         }
@@ -664,10 +701,14 @@ void Estimator::processNonFeatureICP(std::vector<ceres::CostFunction *>& edges,
     int tid = omp_get_thread_num();
     // 线程私有变量
     PointType _pointOri, _pointSel;
-    std::vector<int> _pointSearchInd(5);
-    std::vector<float> _pointSearchSqDis(5);
-    std::vector<int> _pointSearchInd2(5);
-    std::vector<float> _pointSearchSqDis2(5);
+    std::array<int,5>   _pointSearchInd{};
+    std::array<float,5> _pointSearchSqDis{};
+    std::array<int,5>   _pointSearchInd2{};
+    std::array<float,5> _pointSearchSqDis2{};
+    std::vector<int> knn_idx_global(5);
+    std::vector<float> knn_dist_global(5);
+    std::vector<int> knn_idx_local(5);
+    std::vector<float> knn_dist_local(5);
     Eigen::Matrix<double, 5, 3> _matA0;
     Eigen::Matrix<double, 5, 1> _matB0;
     _matB0.setOnes(); _matB0 *= -1;
@@ -685,12 +726,15 @@ void Estimator::processNonFeatureICP(std::vector<ceres::CostFunction *>& edges,
 
       bool found_global = false;
       if(GlobalNonFeatureMap[id].points.size() > 100) {
-        NonFeatureKdMap[id].nearestKSearch(_pointSel, 5, _pointSearchInd, _pointSearchSqDis);
-        if (_pointSearchSqDis.size() >= 5 && _pointSearchSqDis[4] < thres_dist) {
+        NonFeatureKdMap[id].nearestKSearch(_pointSel, 5, knn_idx_global, knn_dist_global);
+        for(int j=0;j<5;++j){ _pointSearchInd[j]=knn_idx_global[j]; _pointSearchSqDis[j]=knn_dist_global[j]; }
+        if (_pointSearchSqDis[4] < thres_dist) {
+          const PointType* __restrict__ gpts = GlobalNonFeatureMap[id].points.data();
         for (int j = 0; j < 5; j++) {
-            _matA0(j, 0) = GlobalNonFeatureMap[id].points[_pointSearchInd[j]].x;
-            _matA0(j, 1) = GlobalNonFeatureMap[id].points[_pointSearchInd[j]].y;
-            _matA0(j, 2) = GlobalNonFeatureMap[id].points[_pointSearchInd[j]].z;
+            const auto& pj = gpts[_pointSearchInd[j]];
+            _matA0(j, 0) = pj.x;
+            _matA0(j, 1) = pj.y;
+            _matA0(j, 2) = pj.z;
         }
         _matX0 = _matA0.colPivHouseholderQr().solve(_matB0);
 
@@ -701,9 +745,10 @@ void Estimator::processNonFeatureICP(std::vector<ceres::CostFunction *>& edges,
 
         bool planeValid = true;
         for (int j = 0; j < 5; j++) {
-            if (std::fabs(pa * GlobalNonFeatureMap[id].points[_pointSearchInd[j]].x +
-                          pb * GlobalNonFeatureMap[id].points[_pointSearchInd[j]].y +
-                          pc * GlobalNonFeatureMap[id].points[_pointSearchInd[j]].z + pd) > 0.2) {
+            const auto& pj = gpts[_pointSearchInd[j]];
+            if (std::fabs(pa * pj.x +
+                          pb * pj.y +
+                          pc * pj.z + pd) > 0.2) {
             planeValid = false;
             break;
           }
@@ -722,12 +767,15 @@ void Estimator::processNonFeatureICP(std::vector<ceres::CostFunction *>& edges,
     }
 
       if(!found_global && localCloudSize > 20){
-      kdtreeLocal->nearestKSearch(_pointSel, 5, _pointSearchInd2, _pointSearchSqDis2);
+      kdtreeLocal->nearestKSearch(_pointSel, 5, knn_idx_local, knn_dist_local);
+      for(int j=0;j<5;++j){ _pointSearchInd2[j]=knn_idx_local[j]; _pointSearchSqDis2[j]=knn_dist_local[j]; }
         if (_pointSearchSqDis2[4] < thres_dist) {
+        const PointType* __restrict__ lpts = laserCloudNonFeatureLocal->points.data();
         for (int j = 0; j < 5; j++) { 
-          _matA0(j, 0) = laserCloudNonFeatureLocal->points[_pointSearchInd2[j]].x;
-          _matA0(j, 1) = laserCloudNonFeatureLocal->points[_pointSearchInd2[j]].y;
-          _matA0(j, 2) = laserCloudNonFeatureLocal->points[_pointSearchInd2[j]].z;
+          const auto& pj = lpts[_pointSearchInd2[j]];
+          _matA0(j, 0) = pj.x;
+          _matA0(j, 1) = pj.y;
+          _matA0(j, 2) = pj.z;
         }
         _matX0 = _matA0.colPivHouseholderQr().solve(_matB0);
 
@@ -738,9 +786,10 @@ void Estimator::processNonFeatureICP(std::vector<ceres::CostFunction *>& edges,
 
         bool planeValid = true;
         for (int j = 0; j < 5; j++) {
-          if (std::fabs(pa * laserCloudNonFeatureLocal->points[_pointSearchInd2[j]].x +
-                        pb * laserCloudNonFeatureLocal->points[_pointSearchInd2[j]].y +
-                        pc * laserCloudNonFeatureLocal->points[_pointSearchInd2[j]].z + pd) > 0.2) {
+          const auto& pj = lpts[_pointSearchInd2[j]];
+          if (std::fabs(pa * pj.x +
+                        pb * pj.y +
+                        pc * pj.z + pd) > 0.2) {
             planeValid = false;
             break;
           }

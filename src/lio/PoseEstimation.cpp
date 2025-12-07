@@ -1,5 +1,29 @@
 #include "Estimator/Estimator.h"
+#include <pthread.h>
+#include <sched.h>
+#include <errno.h>
+#include <string.h>
 typedef pcl::PointXYZINormal PointType;
+
+// 将线程软亲和设置到大核(4-7)，并尝试提升实时调度优先级
+static bool SetSoftAffinityBigCores(const char* tag, int fifo_priority = 30) {
+  cpu_set_t mask;
+  CPU_ZERO(&mask);
+  // RK3588 大核: 4,5,6,7
+  CPU_SET(4, &mask); CPU_SET(5, &mask); CPU_SET(6, &mask); CPU_SET(7, &mask);
+  int ret = pthread_setaffinity_np(pthread_self(), sizeof(mask), &mask);
+  if (ret != 0) {
+    ROS_WARN("[%s] setaffinity failed: %s", tag, strerror(errno));
+    return false;
+  }
+
+  sched_param sp{};
+  sp.sched_priority = fifo_priority;
+  if (sched_setscheduler(0, SCHED_FIFO, &sp) != 0) {
+    ROS_WARN("[%s] sched_setscheduler SCHED_FIFO failed: %s", tag, strerror(errno));
+  }
+  return true;
+}
 
 int WINDOWSIZE;
 bool LidarIMUInited = false;
@@ -376,6 +400,10 @@ void process(){
 	Eigen::Matrix3d delta_Rb = Eigen::Matrix3d::Identity();
 	Eigen::Vector3d delta_tb = Eigen::Vector3d::Zero();
   std::vector<sensor_msgs::ImuConstPtr> vimuMsg;
+  static std::once_flag affinity_once;
+  std::call_once(affinity_once, [](){
+    SetSoftAffinityBigCores("process");
+  });
   while(ros::ok()){
     newfullCloud = false;
     laserCloudFullRes.reset(new pcl::PointCloud<PointType>());
@@ -627,7 +655,12 @@ int main(int argc, char** argv)
                             filter_parameter_nonfeature);
 	lidarFrameList.reset(new std::list<Estimator::LidarFrame>);
 
-  std::thread thread_process{process};
+  SetSoftAffinityBigCores("main");
+
+  std::thread thread_process{[](){
+    SetSoftAffinityBigCores("process_worker");
+    process();
+  }};
   ros::spin();
 
   return 0;

@@ -47,6 +47,9 @@ tf::TransformBroadcaster* tfBroadcaster;
 ros::Publisher pubGps;
 
 bool newfullCloud = false;
+// 可选：发布全量重投影点云（默认关闭以节省计算）
+static const bool enable_full_cloud_publish = false;
+static const int publish_downsample_stride = 5;  // 发布时的抽样步长
 
 Eigen::Matrix4d transformAftMapped = Eigen::Matrix4d::Identity();
 
@@ -607,20 +610,22 @@ void process(){
       t_publish.tic();
 	    pubOdometry(transformTobeMapped, lidar_list->front().timeStamp);
 
-      // publish lidar points
-      int laserCloudFullResNum = lidar_list->front().laserCloud->points.size();
-      pcl::PointCloud<PointType>::Ptr laserCloudAfterEstimate(new pcl::PointCloud<PointType>());
-      laserCloudAfterEstimate->reserve(laserCloudFullResNum);
-      for (int i = 0; i < laserCloudFullResNum; i++) {
-        PointType temp_point;
-        MAP_MANAGER::pointAssociateToMap(&lidar_list->front().laserCloud->points[i], &temp_point, transformTobeMapped);
-        laserCloudAfterEstimate->push_back(temp_point);
+      // 可视化发布：默认关闭；如需发布则下采样以减轻计算
+      if (enable_full_cloud_publish) {
+        int laserCloudFullResNum = lidar_list->front().laserCloud->points.size();
+        pcl::PointCloud<PointType>::Ptr laserCloudAfterEstimate(new pcl::PointCloud<PointType>());
+        laserCloudAfterEstimate->reserve(laserCloudFullResNum / publish_downsample_stride + 1);
+        for (int i = 0; i < laserCloudFullResNum; i += publish_downsample_stride) {
+          PointType temp_point;
+          MAP_MANAGER::pointAssociateToMap(&lidar_list->front().laserCloud->points[i], &temp_point, transformTobeMapped);
+          laserCloudAfterEstimate->push_back(temp_point);
+        }
+        sensor_msgs::PointCloud2 laserCloudMsg;
+        pcl::toROSMsg(*laserCloudAfterEstimate, laserCloudMsg);
+        laserCloudMsg.header.frame_id = "world";
+        laserCloudMsg.header.stamp.fromSec(lidar_list->front().timeStamp);
+        pubFullLaserCloud.publish(laserCloudMsg);
       }
-      sensor_msgs::PointCloud2 laserCloudMsg;
-      pcl::toROSMsg(*laserCloudAfterEstimate, laserCloudMsg);
-      laserCloudMsg.header.frame_id = "world";
-      laserCloudMsg.header.stamp.fromSec(lidar_list->front().timeStamp);
-      pubFullLaserCloud.publish(laserCloudMsg);
       publish_ms = t_publish.toc();
 
 	    // if tightly coupled IMU message, start IMU initialization

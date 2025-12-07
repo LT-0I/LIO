@@ -4,6 +4,7 @@
 #include <ctime>
 #include <sys/stat.h>
 #include <sys/types.h>
+#include <algorithm>
 #include <ros/package.h>
 #include <cerrno>
 #include <cstring>
@@ -1012,37 +1013,69 @@ void Estimator::Estimate(std::list<LidarFrame>& lidarFrameList,
   t_stage.tic();
   // === 零拷贝 MapSnapshot：获取快照指针（无需持锁）===
   const int cubeNum = CUBE_NUM;  // 使用全局常量
+  constexpr int kGridD = 21; // depth (x)
+  constexpr int kGridW = 21; // width (y)
+  constexpr int kGridH = 11; // height (z)
+  constexpr int kRoi = 3;  // 邻域半径（含中心），约 50m 视场覆盖
   const MapSnapshot* snapshot = map_manager->AcquireSnapshot();
   if (!snapshot) {
     // 第一帧还没有有效快照，使用旧方法
     std::unique_lock<std::mutex> locker3(map_manager->mtx_MapManager);
-    #pragma omp parallel for schedule(static, 256)
-    for(int i = 0; i < cubeNum; i++){
-      CornerKdMap[i] = map_manager->getCornerKdMap(i);
-      SurfKdMap[i] = map_manager->getSurfKdMap(i);
-      NonFeatureKdMap[i] = map_manager->getNonFeatureKdMap(i);
-      GlobalSurfMap[i] = map_manager->laserCloudSurf_for_match[i];
-      GlobalCornerMap[i] = map_manager->laserCloudCorner_for_match[i];
-      GlobalNonFeatureMap[i] = map_manager->laserCloudNonFeature_for_match[i];
-  }
-    laserCenWidth_last = map_manager->get_laserCloudCenWidth_last();
-    laserCenHeight_last = map_manager->get_laserCloudCenHeight_last();
-    laserCenDepth_last = map_manager->get_laserCloudCenDepth_last();
+    const int cenD = map_manager->get_laserCloudCenDepth_last();
+    const int cenW = map_manager->get_laserCloudCenWidth_last();
+    const int cenH = map_manager->get_laserCloudCenHeight_last();
+    const int d_min = std::max(0, cenD - kRoi);
+    const int d_max = std::min(kGridD - 1, cenD + kRoi);
+    const int w_min = std::max(0, cenW - kRoi);
+    const int w_max = std::min(kGridW - 1, cenW + kRoi);
+    const int h_min = std::max(0, cenH - kRoi);
+    const int h_max = std::min(kGridH - 1, cenH + kRoi);
+    #pragma omp parallel for collapse(3) schedule(static, 4)
+    for(int h = h_min; h <= h_max; ++h){
+      for(int w = w_min; w <= w_max; ++w){
+        for(int d = d_min; d <= d_max; ++d){
+          const size_t idx = MAP_MANAGER::ToIndex(d, w, h);
+          CornerKdMap[idx] = map_manager->getCornerKdMap(static_cast<int>(idx));
+          SurfKdMap[idx] = map_manager->getSurfKdMap(static_cast<int>(idx));
+          NonFeatureKdMap[idx] = map_manager->getNonFeatureKdMap(static_cast<int>(idx));
+          GlobalSurfMap[idx] = map_manager->laserCloudSurf_for_match[idx];
+          GlobalCornerMap[idx] = map_manager->laserCloudCorner_for_match[idx];
+          GlobalNonFeatureMap[idx] = map_manager->laserCloudNonFeature_for_match[idx];
+        }
+      }
+    }
+    laserCenDepth_last = cenD;
+    laserCenWidth_last = cenW;
+    laserCenHeight_last = cenH;
     locker3.unlock();
   } else {
     // 使用 MapSnapshot（无锁并行拷贝）
-    #pragma omp parallel for schedule(static, 256)
-    for(int i = 0; i < cubeNum; i++){
-      CornerKdMap[i] = *(snapshot->cornerKdMap[i]);
-      SurfKdMap[i] = *(snapshot->surfKdMap[i]);
-      NonFeatureKdMap[i] = *(snapshot->nonFeatureKdMap[i]);
-      GlobalSurfMap[i] = *(snapshot->surfPointMap[i]);
-      GlobalCornerMap[i] = *(snapshot->cornerPointMap[i]);
-      GlobalNonFeatureMap[i] = *(snapshot->nonFeaturePointMap[i]);
-  }
-    laserCenWidth_last = snapshot->cenWidth;
-    laserCenHeight_last = snapshot->cenHeight;
-    laserCenDepth_last = snapshot->cenDepth;
+    const int cenD = snapshot->cenDepth;
+    const int cenW = snapshot->cenWidth;
+    const int cenH = snapshot->cenHeight;
+    const int d_min = std::max(0, cenD - kRoi);
+    const int d_max = std::min(kGridD - 1, cenD + kRoi);
+    const int w_min = std::max(0, cenW - kRoi);
+    const int w_max = std::min(kGridW - 1, cenW + kRoi);
+    const int h_min = std::max(0, cenH - kRoi);
+    const int h_max = std::min(kGridH - 1, cenH + kRoi);
+    #pragma omp parallel for collapse(3) schedule(static, 4)
+    for(int h = h_min; h <= h_max; ++h){
+      for(int w = w_min; w <= w_max; ++w){
+        for(int d = d_min; d <= d_max; ++d){
+          const size_t idx = MAP_MANAGER::ToIndex(d, w, h);
+          CornerKdMap[idx] = *(snapshot->cornerKdMap[idx]);
+          SurfKdMap[idx] = *(snapshot->surfKdMap[idx]);
+          NonFeatureKdMap[idx] = *(snapshot->nonFeatureKdMap[idx]);
+          GlobalSurfMap[idx] = *(snapshot->surfPointMap[idx]);
+          GlobalCornerMap[idx] = *(snapshot->cornerPointMap[idx]);
+          GlobalNonFeatureMap[idx] = *(snapshot->nonFeaturePointMap[idx]);
+        }
+      }
+    }
+    laserCenDepth_last = cenD;
+    laserCenWidth_last = cenW;
+    laserCenHeight_last = cenH;
     
     // 释放快照
     map_manager->ReleaseSnapshot();

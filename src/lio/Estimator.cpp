@@ -11,6 +11,7 @@
 #include <iomanip>
 #include <iostream>
 #include <sstream>
+#include <random>
 
 #ifndef LIKELY
 #define LIKELY(x)   __builtin_expect(!!(x), 1)
@@ -723,9 +724,43 @@ void Estimator::processPointToPlanVec(std::vector<ceres::CostFunction *>& edges,
   } // end parallel
 
   // 串行合并结果
+  size_t total_plan = 0;
   for(int t = 0; t < max_threads; t++){
-    edges.insert(edges.end(), thread_edges[t].begin(), thread_edges[t].end());
-    vPlanFeatures.insert(vPlanFeatures.end(), thread_features[t].begin(), thread_features[t].end());
+    total_plan += thread_edges[t].size();
+  }
+
+  // 自适应尾部削峰：仅在平面残差过多时启用
+  static const size_t kSurfQuota = 1200; // 正常帧不触发；热区帧才限流
+  if (total_plan > kSurfQuota) {
+    std::mt19937 rng(static_cast<uint32_t>(std::chrono::steady_clock::now().time_since_epoch().count()));
+    std::vector<size_t> reservoir;
+    reservoir.reserve(kSurfQuota);
+    size_t idx = 0;
+    auto push_reservoir = [&](ceres::CostFunction* e, const FeaturePlanVec& f){
+      if (idx < kSurfQuota) {
+        reservoir.push_back(idx);
+        edges.push_back(e);
+        vPlanFeatures.push_back(f);
+      } else {
+        std::uniform_int_distribution<size_t> dist(0, idx);
+        size_t j = dist(rng);
+        if (j < kSurfQuota) {
+          edges[j] = e;
+          vPlanFeatures[j] = f;
+        }
+      }
+      ++idx;
+    };
+    for(int t = 0; t < max_threads; t++){
+      for(size_t i = 0; i < thread_edges[t].size(); ++i){
+        push_reservoir(thread_edges[t][i], thread_features[t][i]);
+      }
+    }
+  } else {
+    for(int t = 0; t < max_threads; t++){
+      edges.insert(edges.end(), thread_edges[t].begin(), thread_edges[t].end());
+      vPlanFeatures.insert(vPlanFeatures.end(), thread_features[t].begin(), thread_features[t].end());
+    }
   }
 }
 

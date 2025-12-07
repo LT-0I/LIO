@@ -261,13 +261,15 @@ void Estimator::processPointToLine(std::vector<ceres::CostFunction *>& edges,
     if(std::isnan(_pointSel.x) || std::isnan(_pointSel.y) ||std::isnan(_pointSel.z)) continue;
 
       bool found_global = false;
-      if(GlobalCornerMap[id].points.size() > 100) {
-        CornerKdMap[id].nearestKSearch(_pointSel, 5, knn_idx_global, knn_dist_global);
+      const auto* gpc = GlobalCornerMap[id];
+      const auto* gkd = CornerKdMap[id];
+      if(gpc && gkd && gpc->points.size() > 100) {
+        gkd->nearestKSearch(_pointSel, 5, knn_idx_global, knn_dist_global);
         for(int j=0;j<5;++j){ _pointSearchInd[j]=knn_idx_global[j]; _pointSearchSqDis[j]=knn_dist_global[j]; }
       
       if (_pointSearchSqDis[4] < thres_dist) {
           float cx = 0, cy = 0, cz = 0;
-          const PointType* __restrict__ gpts = GlobalCornerMap[id].points.data();
+          const PointType* __restrict__ gpts = gpc->points.data();
           #pragma GCC unroll 5
         for (int j = 0; j < 5; j++) {
             const auto& pj = gpts[_pointSearchInd[j]];
@@ -430,13 +432,15 @@ void Estimator::processPointToPlan(std::vector<ceres::CostFunction *>& edges,
 
     if(std::isnan(_pointSel.x) || std::isnan(_pointSel.y) ||std::isnan(_pointSel.z)) continue;
 
-    if(GlobalSurfMap[id].points.size() > 50) {
-      SurfKdMap[id].nearestKSearch(_pointSel, 5, knn_idx_global, knn_dist_global);
+    const auto* gspc = GlobalSurfMap[id];
+    const auto* gskd = SurfKdMap[id];
+    if(gspc && gskd && gspc->points.size() > 50) {
+      gskd->nearestKSearch(_pointSel, 5, knn_idx_global, knn_dist_global);
       for(int j=0;j<5;++j){ _pointSearchInd[j]=knn_idx_global[j]; _pointSearchSqDis[j]=knn_dist_global[j]; }
 
       if (_pointSearchSqDis[4] < 1.0) {
         debug_num1 ++;
-        const PointType* __restrict__ gpts = GlobalSurfMap[id].points.data();
+        const PointType* __restrict__ gpts = gspc->points.data();
         for (int j = 0; j < 5; j++) {
           const auto& pj = gpts[_pointSearchInd[j]];
           _matA0(j, 0) = pj.x;
@@ -610,12 +614,14 @@ void Estimator::processPointToPlanVec(std::vector<ceres::CostFunction *>& edges,
     if(std::isnan(_pointSel.x) || std::isnan(_pointSel.y) ||std::isnan(_pointSel.z)) continue;
 
       bool found_global = false;
-      if(GlobalSurfMap[id].points.size() > 50) {
-        SurfKdMap[id].nearestKSearch(_pointSel, 5, knn_idx_global, knn_dist_global);
+      const auto* gspc = GlobalSurfMap[id];
+      const auto* gskd = SurfKdMap[id];
+      if(gspc && gskd && gspc->points.size() > 50) {
+        gskd->nearestKSearch(_pointSel, 5, knn_idx_global, knn_dist_global);
         for(int j=0;j<5;++j){ _pointSearchInd[j]=knn_idx_global[j]; _pointSearchSqDis[j]=knn_dist_global[j]; }
 
       if (_pointSearchSqDis[4] < thres_dist) {
-          const PointType* __restrict__ gpts = GlobalSurfMap[id].points.data();
+          const PointType* __restrict__ gpts = gspc->points.data();
         for (int j = 0; j < 5; j++) {
             const auto& pj = gpts[_pointSearchInd[j]];
             _matA0(j, 0) = pj.x;
@@ -789,11 +795,13 @@ void Estimator::processNonFeatureICP(std::vector<ceres::CostFunction *>& edges,
     if(std::isnan(_pointSel.x) || std::isnan(_pointSel.y) ||std::isnan(_pointSel.z)) continue;
 
       bool found_global = false;
-      if(GlobalNonFeatureMap[id].points.size() > 100) {
-        NonFeatureKdMap[id].nearestKSearch(_pointSel, 5, knn_idx_global, knn_dist_global);
+      const auto* gnpc = GlobalNonFeatureMap[id];
+      const auto* gnkd = NonFeatureKdMap[id];
+      if(gnpc && gnkd && gnpc->points.size() > 100) {
+        gnkd->nearestKSearch(_pointSel, 5, knn_idx_global, knn_dist_global);
         for(int j=0;j<5;++j){ _pointSearchInd[j]=knn_idx_global[j]; _pointSearchSqDis[j]=knn_dist_global[j]; }
         if (_pointSearchSqDis[4] < thres_dist) {
-          const PointType* __restrict__ gpts = GlobalNonFeatureMap[id].points.data();
+          const PointType* __restrict__ gpts = gnpc->points.data();
         for (int j = 0; j < 5; j++) {
             const auto& pj = gpts[_pointSearchInd[j]];
             _matA0(j, 0) = pj.x;
@@ -1014,37 +1022,35 @@ void Estimator::Estimate(std::list<LidarFrame>& lidarFrameList,
   const int cubeNum = CUBE_NUM;  // 使用全局常量
   const MapSnapshot* snapshot = map_manager->AcquireSnapshot();
   if (!snapshot) {
-    // 第一帧还没有有效快照，使用旧方法
+    // 无快照：直接借用 Map_Manager 内部指针（只读）
     std::unique_lock<std::mutex> locker3(map_manager->mtx_MapManager);
     #pragma omp parallel for schedule(static, 256)
     for(int i = 0; i < cubeNum; i++){
-      CornerKdMap[i] = map_manager->getCornerKdMap(i);
-      SurfKdMap[i] = map_manager->getSurfKdMap(i);
-      NonFeatureKdMap[i] = map_manager->getNonFeatureKdMap(i);
-      GlobalSurfMap[i] = map_manager->laserCloudSurf_for_match[i];
-      GlobalCornerMap[i] = map_manager->laserCloudCorner_for_match[i];
-      GlobalNonFeatureMap[i] = map_manager->laserCloudNonFeature_for_match[i];
-  }
+      CornerKdMap[i] = map_manager->getCornerKdMapPtr(i);
+      SurfKdMap[i] = map_manager->getSurfKdMapPtr(i);
+      NonFeatureKdMap[i] = map_manager->getNonFeatureKdMapPtr(i);
+      GlobalSurfMap[i] = map_manager->getSurfMapPtr(i);
+      GlobalCornerMap[i] = map_manager->getCornerMapPtr(i);
+      GlobalNonFeatureMap[i] = map_manager->getNonFeatureMapPtr(i);
+    }
     laserCenWidth_last = map_manager->get_laserCloudCenWidth_last();
     laserCenHeight_last = map_manager->get_laserCloudCenHeight_last();
     laserCenDepth_last = map_manager->get_laserCloudCenDepth_last();
     locker3.unlock();
   } else {
-    // 使用 MapSnapshot（无锁并行拷贝）
+    // 使用 MapSnapshot：直接借用指针，不复制
     #pragma omp parallel for schedule(static, 256)
     for(int i = 0; i < cubeNum; i++){
-      CornerKdMap[i] = *(snapshot->cornerKdMap[i]);
-      SurfKdMap[i] = *(snapshot->surfKdMap[i]);
-      NonFeatureKdMap[i] = *(snapshot->nonFeatureKdMap[i]);
-      GlobalSurfMap[i] = *(snapshot->surfPointMap[i]);
-      GlobalCornerMap[i] = *(snapshot->cornerPointMap[i]);
-      GlobalNonFeatureMap[i] = *(snapshot->nonFeaturePointMap[i]);
-  }
+      CornerKdMap[i] = snapshot->cornerKdMap[i];
+      SurfKdMap[i] = snapshot->surfKdMap[i];
+      NonFeatureKdMap[i] = snapshot->nonFeatureKdMap[i];
+      GlobalSurfMap[i] = snapshot->surfPointMap[i];
+      GlobalCornerMap[i] = snapshot->cornerPointMap[i];
+      GlobalNonFeatureMap[i] = snapshot->nonFeaturePointMap[i];
+    }
     laserCenWidth_last = snapshot->cenWidth;
     laserCenHeight_last = snapshot->cenHeight;
     laserCenDepth_last = snapshot->cenDepth;
-    
-    // 释放快照
     map_manager->ReleaseSnapshot();
   }
   t_stage_prep_ms = t_stage.toc();

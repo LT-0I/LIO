@@ -103,24 +103,34 @@ public:
 
     size_t FindUsedNonFeatureMap(const PointType *p,int a,int b,int c);
 
-    pcl::KdTreeFLANN<PointType> getCornerKdMap(int i){
-      return CornerKdMap_last[i];
+    // 只读指针借用（不复制，Map_Manager 持有所有权）
+    const pcl::KdTreeFLANN<PointType>* getCornerKdMapPtr(int i){
+      return laserCloudCornerKdMap[i].get();
     }
-    pcl::KdTreeFLANN<PointType> getSurfKdMap(int i){
-      return SurfKdMap_last[i];
+    const pcl::KdTreeFLANN<PointType>* getSurfKdMapPtr(int i){
+      return laserCloudSurfKdMap[i].get();
     }
-    pcl::KdTreeFLANN<PointType> getNonFeatureKdMap(int i){
-      return NonFeatureKdMap_last[i];
+    const pcl::KdTreeFLANN<PointType>* getNonFeatureKdMapPtr(int i){
+      return laserCloudNonFeatureKdMap[i].get();
     }
-		pcl::PointCloud<PointType>::Ptr get_corner_map(){
-			return laserCloudCornerFromMap;
-		}
-		pcl::PointCloud<PointType>::Ptr get_surf_map(){
-			return laserCloudSurfFromMap;
-		}
+    const pcl::PointCloud<PointType>* getCornerMapPtr(int i){
+      return laserCloudCornerArray[i].get();
+    }
+    const pcl::PointCloud<PointType>* getSurfMapPtr(int i){
+      return laserCloudSurfArray[i].get();
+    }
+    const pcl::PointCloud<PointType>* getNonFeatureMapPtr(int i){
+      return laserCloudNonFeatureArray[i].get();
+    }
+    pcl::PointCloud<PointType>::Ptr get_corner_map(){
+      return laserCloudCornerFromMap;
+    }
+    pcl::PointCloud<PointType>::Ptr get_surf_map(){
+      return laserCloudSurfFromMap;
+    }
     pcl::PointCloud<PointType>::Ptr get_nonfeature_map(){
-			return laserCloudNonFeatureFromMap;
-		}
+      return laserCloudNonFeatureFromMap;
+    }
     int get_map_current_pos(){
       return currentUpdatePos;
     }

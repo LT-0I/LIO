@@ -290,15 +290,15 @@ private:
 	std::mutex mtx_Map;
 	std::thread threadMap;
 
-	// 全局地图点云（保留）
-	pcl::PointCloud<PointType> GlobalSurfMap[10000];
-	pcl::PointCloud<PointType> GlobalCornerMap[10000];
-	pcl::PointCloud<PointType> GlobalNonFeatureMap[10000];
+	// 全局地图指针（只读借用，Map_Manager 持有所有权）
+	const pcl::PointCloud<PointType>* GlobalSurfMap[10000]{};
+	const pcl::PointCloud<PointType>* GlobalCornerMap[10000]{};
+	const pcl::PointCloud<PointType>* GlobalNonFeatureMap[10000]{};
 
-	// 全局地图 KD-tree（使用 PCL，nanoflann 缓存方案精度差已回退）
-	pcl::KdTreeFLANN<PointType> CornerKdMap[10000];
-	pcl::KdTreeFLANN<PointType> SurfKdMap[10000];
-	pcl::KdTreeFLANN<PointType> NonFeatureKdMap[10000];
+	// 全局地图 KD-tree 指针（只读借用）
+	const pcl::KdTreeFLANN<PointType>* CornerKdMap[10000]{};
+	const pcl::KdTreeFLANN<PointType>* SurfKdMap[10000]{};
+	const pcl::KdTreeFLANN<PointType>* NonFeatureKdMap[10000]{};
 
 	int laserCenWidth_last = 10;   // 对应 CUBE 网格 21
 	int laserCenHeight_last = 5;   // 对应 CUBE 网格 11

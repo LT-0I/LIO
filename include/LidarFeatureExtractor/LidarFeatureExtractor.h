@@ -8,7 +8,6 @@
 #include <pcl/point_types.h>
 #include <pcl/kdtree/kdtree_flann.h>
 #include <future>
-#include <vector>
 #include "opencv2/core.hpp"
 #include "segment/segment.hpp"
 class LidarFeatureExtractor{
@@ -121,12 +120,6 @@ private:
     float thBreakCornerDis;
 
     float thLidarNearestDis;  
-
-    // SoA 缓冲，跨帧复用以避免重复分配
-    std::vector<float> xs_;
-    std::vector<float> ys_;
-    std::vector<float> zs_;
-    std::vector<float> ints_;
 };
 
 #endif //LIO_LIVOX_LIDARFEATUREEXTRACTOR_H

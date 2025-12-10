@@ -122,15 +122,15 @@ public:
     const pcl::PointCloud<PointType>* getNonFeatureMapPtr(int i){
       return laserCloudNonFeatureArray[i].get();
     }
-    pcl::PointCloud<PointType>::Ptr get_corner_map(){
-      return laserCloudCornerFromMap;
-    }
-    pcl::PointCloud<PointType>::Ptr get_surf_map(){
-      return laserCloudSurfFromMap;
-    }
+		pcl::PointCloud<PointType>::Ptr get_corner_map(){
+			return laserCloudCornerFromMap;
+		}
+		pcl::PointCloud<PointType>::Ptr get_surf_map(){
+			return laserCloudSurfFromMap;
+		}
     pcl::PointCloud<PointType>::Ptr get_nonfeature_map(){
-      return laserCloudNonFeatureFromMap;
-    }
+			return laserCloudNonFeatureFromMap;
+		}
     int get_map_current_pos(){
       return currentUpdatePos;
     }

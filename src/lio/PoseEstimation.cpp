@@ -11,6 +11,7 @@
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <ros/package.h>
+#include <algorithm>
 typedef pcl::PointXYZINormal PointType;
 
 // 将线程软亲和设置到大核(4-7)，并尝试提升实时调度优先级
@@ -47,8 +48,9 @@ tf::TransformBroadcaster* tfBroadcaster;
 ros::Publisher pubGps;
 
 bool newfullCloud = false;
-static const bool enable_full_cloud_publish = false;
-static const int publish_downsample_stride = 5;
+// 可配置：是否发布全量重投影点云，以及发布下采样步长
+bool enable_full_cloud_publish = true;
+int publish_downsample_stride = 5;
 
 Eigen::Matrix4d transformAftMapped = Eigen::Matrix4d::Identity();
 
@@ -63,6 +65,9 @@ Eigen::Vector3d GravityVector;
 float filter_parameter_corner = 0.2;
 float filter_parameter_surf = 0.4;
 float filter_parameter_nonfeature = 0.4;
+int roi_depth = 4;
+int roi_width = 2;
+int roi_height = 1;
 int IMU_Mode = 2;
 // 优化参数
 int max_iterations = 4;
@@ -611,19 +616,19 @@ void process(){
 
       // 可选：发布可视化点云（默认关闭，避免额外计算）
       if (enable_full_cloud_publish) {
-        int laserCloudFullResNum = lidar_list->front().laserCloud->points.size();
-        pcl::PointCloud<PointType>::Ptr laserCloudAfterEstimate(new pcl::PointCloud<PointType>());
+      int laserCloudFullResNum = lidar_list->front().laserCloud->points.size();
+      pcl::PointCloud<PointType>::Ptr laserCloudAfterEstimate(new pcl::PointCloud<PointType>());
         laserCloudAfterEstimate->reserve(laserCloudFullResNum / publish_downsample_stride + 1);
         for (int i = 0; i < laserCloudFullResNum; i += publish_downsample_stride) {
-          PointType temp_point;
-          MAP_MANAGER::pointAssociateToMap(&lidar_list->front().laserCloud->points[i], &temp_point, transformTobeMapped);
-          laserCloudAfterEstimate->push_back(temp_point);
-        }
-        sensor_msgs::PointCloud2 laserCloudMsg;
-        pcl::toROSMsg(*laserCloudAfterEstimate, laserCloudMsg);
-        laserCloudMsg.header.frame_id = "world";
-        laserCloudMsg.header.stamp.fromSec(lidar_list->front().timeStamp);
-        pubFullLaserCloud.publish(laserCloudMsg);
+        PointType temp_point;
+        MAP_MANAGER::pointAssociateToMap(&lidar_list->front().laserCloud->points[i], &temp_point, transformTobeMapped);
+        laserCloudAfterEstimate->push_back(temp_point);
+      }
+      sensor_msgs::PointCloud2 laserCloudMsg;
+      pcl::toROSMsg(*laserCloudAfterEstimate, laserCloudMsg);
+      laserCloudMsg.header.frame_id = "world";
+      laserCloudMsg.header.stamp.fromSec(lidar_list->front().timeStamp);
+      pubFullLaserCloud.publish(laserCloudMsg);
       }
       publish_ms = t_publish.toc();
 
@@ -693,7 +698,13 @@ int main(int argc, char** argv)
   ros::param::get("~filter_parameter_corner",filter_parameter_corner);
   ros::param::get("~filter_parameter_surf",filter_parameter_surf);
   ros::param::get("~filter_parameter_nonfeature",filter_parameter_nonfeature);
+  ros::param::param("~roi_depth", roi_depth, roi_depth);
+  ros::param::param("~roi_width", roi_width, roi_width);
+  ros::param::param("~roi_height", roi_height, roi_height);
   ros::param::get("~IMU_Mode",IMU_Mode);
+  ros::param::param("~enable_full_cloud_publish", enable_full_cloud_publish, enable_full_cloud_publish);
+  ros::param::param("~publish_downsample_stride", publish_downsample_stride, publish_downsample_stride);
+  publish_downsample_stride = std::max(1, publish_downsample_stride);
   // 优化参数
   ros::param::get("~max_iterations", max_iterations);
   ros::param::get("~ceres_max_iterations", ceres_max_iterations);
@@ -739,6 +750,7 @@ int main(int argc, char** argv)
                             max_iterations, ceres_max_iterations,
                             convergence_threshold_r, convergence_threshold_t,
                             filter_parameter_nonfeature);
+  estimator->setRoi(roi_depth, roi_width, roi_height);
 	lidarFrameList.reset(new std::list<Estimator::LidarFrame>);
 
   SetSoftAffinityBigCores("main");

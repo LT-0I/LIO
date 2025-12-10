@@ -1,6 +1,7 @@
 #include "Estimator/Estimator.h"
 #include <omp.h>
 #include <chrono>
+#include <algorithm>
 #include <ctime>
 #include <sys/stat.h>
 #include <sys/types.h>
@@ -46,7 +47,8 @@ Estimator::Estimator(const float& filter_corner, const float& filter_surf,
                      float filter_nonfeature)
   : max_iterations_(max_iters), ceres_max_iterations_(ceres_max_iters),
     convergence_threshold_r_(conv_r), convergence_threshold_t_(conv_t),
-    filter_nonfeature_(filter_nonfeature) {
+    filter_nonfeature_(filter_nonfeature),
+    roi_depth_(4), roi_width_(2), roi_height_(1) {
   laserCloudCornerFromLocal.reset(new pcl::PointCloud<PointType>);
   laserCloudSurfFromLocal.reset(new pcl::PointCloud<PointType>);
   laserCloudNonFeatureFromLocal.reset(new pcl::PointCloud<PointType>);
@@ -1019,39 +1021,74 @@ void Estimator::Estimate(std::list<LidarFrame>& lidarFrameList,
 
   TicToc t_stage;
   t_stage.tic();
-  // === 零拷贝 MapSnapshot：获取快照指针（无需持锁）===
+  // === 零拷贝 MapSnapshot：获取快照指针（隧道场景 ROI 截取） ===
   const int cubeNum = CUBE_NUM;  // 使用全局常量
+  constexpr int kGridD = 21;     // depth (x)
+  constexpr int kGridW = 21;     // width (y)
+  constexpr int kGridH = 11;     // height (z)
+  // 隧道场景：纵深更长、横向/竖向较窄（可配置）
+  const int kRoiDepth = roi_depth_;
+  const int kRoiWidth = roi_width_;
+  const int kRoiHeight = roi_height_;
+
+  auto clear_map_views = [&]() {
+    std::fill(CornerKdMap, CornerKdMap + cubeNum, nullptr);
+    std::fill(SurfKdMap, SurfKdMap + cubeNum, nullptr);
+    std::fill(NonFeatureKdMap, NonFeatureKdMap + cubeNum, nullptr);
+    std::fill(GlobalSurfMap, GlobalSurfMap + cubeNum, nullptr);
+    std::fill(GlobalCornerMap, GlobalCornerMap + cubeNum, nullptr);
+    std::fill(GlobalNonFeatureMap, GlobalNonFeatureMap + cubeNum, nullptr);
+  };
+
+  auto populate_roi = [&](int cenD, int cenW, int cenH, const MapSnapshot* snap) {
+    const int d_min = std::max(0, cenD - kRoiDepth);
+    const int d_max = std::min(kGridD - 1, cenD + kRoiDepth);
+    const int w_min = std::max(0, cenW - kRoiWidth);
+    const int w_max = std::min(kGridW - 1, cenW + kRoiWidth);
+    const int h_min = std::max(0, cenH - kRoiHeight);
+    const int h_max = std::min(kGridH - 1, cenH + kRoiHeight);
+
+    #pragma omp parallel for collapse(3) schedule(static, 4)
+    for(int h = h_min; h <= h_max; ++h){
+      for(int w = w_min; w <= w_max; ++w){
+        for(int d = d_min; d <= d_max; ++d){
+          const size_t idx = MAP_MANAGER::ToIndex(d, w, h);
+          if (snap) {
+            CornerKdMap[idx] = snap->cornerKdMap[idx];
+            SurfKdMap[idx] = snap->surfKdMap[idx];
+            NonFeatureKdMap[idx] = snap->nonFeatureKdMap[idx];
+            GlobalSurfMap[idx] = snap->surfPointMap[idx];
+            GlobalCornerMap[idx] = snap->cornerPointMap[idx];
+            GlobalNonFeatureMap[idx] = snap->nonFeaturePointMap[idx];
+          } else {
+            CornerKdMap[idx] = map_manager->getCornerKdMapPtr(static_cast<int>(idx));
+            SurfKdMap[idx] = map_manager->getSurfKdMapPtr(static_cast<int>(idx));
+            NonFeatureKdMap[idx] = map_manager->getNonFeatureKdMapPtr(static_cast<int>(idx));
+            GlobalSurfMap[idx] = map_manager->getSurfMapPtr(static_cast<int>(idx));
+            GlobalCornerMap[idx] = map_manager->getCornerMapPtr(static_cast<int>(idx));
+            GlobalNonFeatureMap[idx] = map_manager->getNonFeatureMapPtr(static_cast<int>(idx));
+          }
+        }
+      }
+    }
+    laserCenDepth_last = cenD;
+    laserCenWidth_last = cenW;
+    laserCenHeight_last = cenH;
+  };
+
+  clear_map_views();
   const MapSnapshot* snapshot = map_manager->AcquireSnapshot();
   if (!snapshot) {
-    // 无快照：直接借用 Map_Manager 内部指针（只读）
+    // 无快照：直接借用 Map_Manager 内部指针（只读），限 ROI
     std::unique_lock<std::mutex> locker3(map_manager->mtx_MapManager);
-    #pragma omp parallel for schedule(static, 256)
-    for(int i = 0; i < cubeNum; i++){
-      CornerKdMap[i] = map_manager->getCornerKdMapPtr(i);
-      SurfKdMap[i] = map_manager->getSurfKdMapPtr(i);
-      NonFeatureKdMap[i] = map_manager->getNonFeatureKdMapPtr(i);
-      GlobalSurfMap[i] = map_manager->getSurfMapPtr(i);
-      GlobalCornerMap[i] = map_manager->getCornerMapPtr(i);
-      GlobalNonFeatureMap[i] = map_manager->getNonFeatureMapPtr(i);
-    }
-    laserCenWidth_last = map_manager->get_laserCloudCenWidth_last();
-    laserCenHeight_last = map_manager->get_laserCloudCenHeight_last();
-    laserCenDepth_last = map_manager->get_laserCloudCenDepth_last();
+    const int cenD = map_manager->get_laserCloudCenDepth_last();
+    const int cenW = map_manager->get_laserCloudCenWidth_last();
+    const int cenH = map_manager->get_laserCloudCenHeight_last();
+    populate_roi(cenD, cenW, cenH, nullptr);
     locker3.unlock();
   } else {
-    // 使用 MapSnapshot：直接借用指针，不复制
-    #pragma omp parallel for schedule(static, 256)
-    for(int i = 0; i < cubeNum; i++){
-      CornerKdMap[i] = snapshot->cornerKdMap[i];
-      SurfKdMap[i] = snapshot->surfKdMap[i];
-      NonFeatureKdMap[i] = snapshot->nonFeatureKdMap[i];
-      GlobalSurfMap[i] = snapshot->surfPointMap[i];
-      GlobalCornerMap[i] = snapshot->cornerPointMap[i];
-      GlobalNonFeatureMap[i] = snapshot->nonFeaturePointMap[i];
-    }
-    laserCenWidth_last = snapshot->cenWidth;
-    laserCenHeight_last = snapshot->cenHeight;
-    laserCenDepth_last = snapshot->cenDepth;
+    // 使用 MapSnapshot：直接借用指针，不复制，限 ROI
+    populate_roi(snapshot->cenDepth, snapshot->cenWidth, snapshot->cenHeight, snapshot);
     map_manager->ReleaseSnapshot();
   }
   t_stage_prep_ms = t_stage.toc();

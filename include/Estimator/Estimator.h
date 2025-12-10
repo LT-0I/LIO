@@ -23,6 +23,7 @@
 #include <unordered_map>
 #include <shared_mutex>
 #include <array>
+#include <algorithm>
 
 // 启用 nanoflann 替换 PCL KdTreeFLANN
 #define USE_NANOFLANN 1
@@ -238,6 +239,13 @@ public:
 				  const Eigen::Matrix4d& exTlb,
 				  const Eigen::Vector3d& gravity);
 
+	// 配置隧道场景 ROI（单位：cube 网格半径）
+	void setRoi(int depth, int width, int height) {
+		roi_depth_ = std::max(0, depth);
+		roi_width_ = std::max(0, width);
+		roi_height_ = std::max(0, height);
+	}
+
 	pcl::PointCloud<PointType>::Ptr get_corner_map(){
 		return map_manager->get_corner_map();
 	}
@@ -315,6 +323,11 @@ private:
 	int map_skip_frame = 2; //every map_skip_frame frame update map
 	double plan_weight_tan = 0.0;
 	double thres_dist = 1.0;
+
+	// 隧道场景 ROI 配置（cube 半径）
+	int roi_depth_ = 4;   // 前后
+	int roi_width_ = 2;   // 左右
+	int roi_height_ = 1;  // 上下
 	
 	// === 可调参数（从 launch 文件读取） ===
 	int max_iterations_ = 4;           // 外层迭代次数

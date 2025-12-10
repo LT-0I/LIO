@@ -10,8 +10,8 @@
         <param name="IMU_Mode" type="int" value="2" />
         
         <!-- ========== 体素滤波参数（值越大点越少，越快但可能精度下降）========== -->
-        <param name="filter_parameter_corner" type="double" value="0.2" />
-        <param name="filter_parameter_surf" type="double" value="0.35" />
+        <param name="filter_parameter_corner" type="double" value="0.25" />
+        <param name="filter_parameter_surf" type="double" value="0.4" />
         <param name="filter_parameter_nonfeature" type="double" value="1" />
         <!-- 隧道场景 ROI (cube 半径) 可配置，默认21 11 21-->
         <param name="roi_depth" type="int" value="8" />

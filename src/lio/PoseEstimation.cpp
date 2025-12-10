@@ -4,13 +4,6 @@
 #include <errno.h>
 #include <string.h>
 #include <chrono>
-#include <fstream>
-#include <iomanip>
-#include <sstream>
-#include <ctime>
-#include <sys/stat.h>
-#include <sys/types.h>
-#include <ros/package.h>
 #include <algorithm>
 typedef pcl::PointXYZINormal PointType;
 
@@ -79,57 +72,6 @@ int pushCount = 0;
 double startTime = 0;
 
 nav_msgs::Path laserOdoPath;
-
-namespace {
-struct TicToc {
-  using clock = std::chrono::steady_clock;
-  clock::time_point t0;
-  inline void tic() { t0 = clock::now(); }
-  inline double toc() const {
-    return std::chrono::duration<double, std::milli>(clock::now() - t0).count();
-  }
-};
-
-bool EnsureDir(const std::string& path) {
-  struct stat st {};
-  if (stat(path.c_str(), &st) == 0) {
-    return S_ISDIR(st.st_mode);
-  }
-  if (mkdir(path.c_str(), 0755) == 0 || errno == EEXIST) {
-    return true;
-  }
-  ROS_WARN_STREAM("Failed to create dir: " << path << " err=" << strerror(errno));
-  return false;
-}
-
-std::ofstream pose_time_log;
-bool pose_time_ready = false;
-
-void InitPoseTimeLog() {
-  if (pose_time_ready) return;
-  std::string base_path = ros::package::getPath("lio_livox");
-  std::string log_dir = "/tmp/lio_livox_csv";
-  if (!base_path.empty()) {
-    log_dir = base_path + "/logs/@csv_logs";
-  }
-  if (!EnsureDir(log_dir)) {
-    ROS_WARN_STREAM("Pose timing log disabled: cannot prepare dir " << log_dir);
-    return;
-  }
-  std::time_t now = std::time(nullptr);
-  std::tm tm_now{};
-  localtime_r(&now, &tm_now);
-  std::ostringstream oss;
-  oss << log_dir << "/pose_timing_" << std::put_time(&tm_now, "%Y%m%d_%H%M%S") << ".csv";
-  pose_time_log.open(oss.str(), std::ios::out | std::ios::trunc);
-  if (pose_time_log.is_open()) {
-    pose_time_log << "timestamp,frame_total_ms,undistort_ms,backend_ms,publish_ms\n";
-    pose_time_ready = true;
-  } else {
-    ROS_WARN_STREAM("Failed to open pose timing csv: " << oss.str());
-  }
-}
-}  // namespace
 
 /** \brief publish odometry infomation
   * \param[in] newPose: pose to be published
@@ -485,13 +427,6 @@ void process(){
 
     if(newfullCloud){
 
-      InitPoseTimeLog();
-      TicToc t_frame;
-      t_frame.tic();
-      double undistort_ms = 0.0;
-      double backend_ms = 0.0;
-      double publish_ms = 0.0;
-
       nav_msgs::Odometry debugInfo;
       debugInfo.pose.pose.position.x = 0;
       debugInfo.pose.pose.position.y = 0;
@@ -581,16 +516,10 @@ void process(){
 	    }
 
 	    // remove lidar distortion
-      TicToc t_undistort;
-      t_undistort.tic();
 	    RemoveLidarDistortion(laserCloudFullRes, delta_Rl, delta_tl);
-      undistort_ms = t_undistort.toc();
 
       // optimize current lidar pose with IMU
-      TicToc t_backend;
-      t_backend.tic();
       estimator->EstimateLidarPose(*lidar_list, exTlb, GravityVector, debugInfo);
-      backend_ms = t_backend.toc();
 
       pcl::PointCloud<PointType>::Ptr laserCloudCornerMap(new pcl::PointCloud<PointType>());
       pcl::PointCloud<PointType>::Ptr laserCloudSurfMap(new pcl::PointCloud<PointType>());
@@ -610,8 +539,6 @@ void process(){
 	    transformAftMapped.topRightCorner(3,1) = lidar_list->front().P;
 
 	    // publish odometry rostopic
-      TicToc t_publish;
-      t_publish.tic();
 	    pubOdometry(transformTobeMapped, lidar_list->front().timeStamp);
 
       // 可选：发布可视化点云（默认关闭，避免额外计算）
@@ -630,8 +557,6 @@ void process(){
       laserCloudMsg.header.stamp.fromSec(lidar_list->front().timeStamp);
       pubFullLaserCloud.publish(laserCloudMsg);
       }
-      publish_ms = t_publish.toc();
-
 	    // if tightly coupled IMU message, start IMU initialization
 	    if(IMU_Mode > 1 && !LidarIMUInited){
 		    // update lidar frame pose
@@ -678,13 +603,6 @@ void process(){
 		    }
 	    }
       time_last_lidar = time_curr_lidar;
-      if (pose_time_ready) {
-        pose_time_log << std::fixed << std::setprecision(6) << time_curr_lidar << ','
-                      << std::setprecision(3) << t_frame.toc() << ','
-                      << undistort_ms << ','
-                      << backend_ms << ','
-                      << publish_ms << '\n';
-      }
 
     }
   }

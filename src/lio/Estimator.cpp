@@ -2,44 +2,12 @@
 #include <omp.h>
 #include <chrono>
 #include <algorithm>
-#include <ctime>
-#include <sys/stat.h>
-#include <sys/types.h>
-#include <ros/package.h>
-#include <cerrno>
-#include <cstring>
-#include <fstream>
-#include <iomanip>
 #include <iostream>
-#include <sstream>
 
 #ifndef LIKELY
 #define LIKELY(x)   __builtin_expect(!!(x), 1)
 #define UNLIKELY(x) __builtin_expect(!!(x), 0)
 #endif
-
-namespace {
-struct TicToc {
-  using clock = std::chrono::steady_clock;
-  clock::time_point t0;
-  inline void tic() { t0 = clock::now(); }
-  inline double toc() const {
-    return std::chrono::duration<double, std::milli>(clock::now() - t0).count();
-  }
-};
-
-bool EnsureDirExists(const std::string& path) {
-  struct stat st {};
-  if (stat(path.c_str(), &st) == 0) {
-    return S_ISDIR(st.st_mode);
-  }
-  if (mkdir(path.c_str(), 0755) == 0 || errno == EEXIST) {
-    return true;
-  }
-  ROS_WARN_STREAM("Failed to create csv log dir: " << path << " err=" << strerror(errno));
-  return false;
-}
-}  // namespace
 
 Estimator::Estimator(const float& filter_corner, const float& filter_surf,
                      int max_iters, int ceres_max_iters,
@@ -108,42 +76,11 @@ Estimator::Estimator(const float& filter_corner, const float& filter_surf,
   ROS_INFO("Estimator: Pre-allocated %d features per frame x %d frames", 
            MAX_FEATURES_PER_FRAME, SLIDEWINDOWSIZE);
 
-  initTimeLogger();
 }
 
 Estimator::~Estimator(){
   delete map_manager;
 }
-
-void Estimator::initTimeLogger() {
-  if (time_log_ready_) return;
-
-  std::string base_path = ros::package::getPath("lio_livox");
-  std::string log_dir = "/tmp/lio_livox_csv";
-  if (!base_path.empty()) {
-    log_dir = base_path + "/logs/@csv_logs";
-  }
-  if (!EnsureDirExists(log_dir)) {
-    ROS_WARN_STREAM("Time log disabled: cannot prepare dir " << log_dir);
-    return;
-  }
-
-  std::time_t now = std::time(nullptr);
-  std::tm tm_now{};
-  localtime_r(&now, &tm_now);
-  std::ostringstream oss;
-  oss << log_dir << "/time_log_" << std::put_time(&tm_now, "%Y%m%d_%H%M%S") << ".csv";
-
-  time_log_.open(oss.str(), std::ios::out | std::ios::trunc);
-  if (time_log_.is_open()) {
-    time_log_ << "frame_id,total_ms,prep_map_ms,build_ms,solve_ms,marg_ms\n";
-    time_log_ready_ = true;
-  } else {
-    ROS_WARN_STREAM("Failed to open time log: " << oss.str());
-  }
-}
-
-
 [[noreturn]] void Estimator::threadMapIncrement(){
   pcl::PointCloud<PointType>::Ptr laserCloudCorner(new pcl::PointCloud<PointType>);
   pcl::PointCloud<PointType>::Ptr laserCloudSurf(new pcl::PointCloud<PointType>);
@@ -991,15 +928,6 @@ void Estimator::Estimate(std::list<LidarFrame>& lidarFrameList,
                          const Eigen::Matrix4d& exTlb,
                          const Eigen::Vector3d& gravity){
 
-  TicToc t_whole_frame;
-  t_whole_frame.tic();
-  initTimeLogger();
-
-  double t_stage_prep_ms = 0.0;
-  double t_stage_build_ms = 0.0;
-  double t_stage_solve_ms = 0.0;
-  double t_stage_marg_ms = 0.0;
-
   int num_corner_map = 0;
   int num_surf_map = 0;
 
@@ -1019,8 +947,6 @@ void Estimator::Estimate(std::list<LidarFrame>& lidarFrameList,
   kdtreeSurfFromLocal->setInputCloud(laserCloudSurfFromLocal);
   kdtreeNonFeatureFromLocal->setInputCloud(laserCloudNonFeatureFromLocal);
 
-  TicToc t_stage;
-  t_stage.tic();
   // === 零拷贝 MapSnapshot：获取快照指针（隧道场景 ROI 截取） ===
   const int cubeNum = CUBE_NUM;  // 使用全局常量
   constexpr int kGridD = 21;     // depth (x)
@@ -1091,7 +1017,6 @@ void Estimator::Estimate(std::list<LidarFrame>& lidarFrameList,
     populate_roi(snapshot->cenDepth, snapshot->cenWidth, snapshot->cenHeight, snapshot);
     map_manager->ReleaseSnapshot();
   }
-  t_stage_prep_ms = t_stage.toc();
 
   // === 优化点1：使用预分配的成员变量，只 clear 不重新分配 ===
   for(int f = 0; f < windowSize; ++f) {
@@ -1124,8 +1049,6 @@ void Estimator::Estimate(std::list<LidarFrame>& lidarFrameList,
   bool converged = false;
   for(int iterOpt=0; iterOpt<max_iters && !converged; ++iterOpt){
 
-    TicToc t_stage_build;
-    t_stage_build.tic();
     vector2double(lidarFrameList);
 
     //create huber loss function
@@ -1349,10 +1272,6 @@ void Estimator::Estimate(std::list<LidarFrame>& lidarFrameList,
         valid_surf_count_ = cntSurf;
         checkDegeneracy();
       }
-    t_stage_build_ms += t_stage_build.toc();
-
-    TicToc t_stage_solve;
-    t_stage_solve.tic();
       ceres::Solver::Options options;
       // 仅绑定大核，避免小核拖慢同步
       options.num_threads = 4;
@@ -1369,7 +1288,6 @@ void Estimator::Estimate(std::list<LidarFrame>& lidarFrameList,
       options.max_consecutive_nonmonotonic_steps = 4;
     ceres::Solver::Summary summary;
     ceres::Solve(options, &problem, &summary);
-    t_stage_solve_ms += t_stage_solve.toc();
 
     double2vector(lidarFrameList);
 
@@ -1388,8 +1306,6 @@ void Estimator::Estimate(std::list<LidarFrame>& lidarFrameList,
       ROS_INFO("Frame: %d, iters: %d\n", frame_count++, iterOpt+1);
       if(windowSize != SLIDEWINDOWSIZE) break;
       // apply marginalization
-      TicToc t_stage_marg;
-      t_stage_marg.tic();
       auto *marginalization_info = new MarginalizationInfo();
       if (last_marginalization_info){
         std::vector<int> drop_set;
@@ -1505,7 +1421,6 @@ void Estimator::Estimate(std::list<LidarFrame>& lidarFrameList,
       delete last_marginalization_info;
       last_marginalization_info = marginalization_info;
       last_marginalization_parameter_blocks = parameter_blocks;
-      t_stage_marg_ms += t_stage_marg.toc();
       break;
     }
 
@@ -1521,16 +1436,6 @@ void Estimator::Estimate(std::list<LidarFrame>& lidarFrameList,
     }
   }
 
-  const double final_time = t_whole_frame.toc();
-
-  if (time_log_ready_) {
-    time_log_ << frame_count << ','
-              << final_time << ','
-              << t_stage_prep_ms << ','
-              << t_stage_build_ms << ','
-              << t_stage_solve_ms << ','
-              << t_stage_marg_ms << '\n';
-  }
 }
 void Estimator::MapIncrementLocal(const pcl::PointCloud<PointType>::Ptr& laserCloudCornerStack,
                                   const pcl::PointCloud<PointType>::Ptr& laserCloudSurfStack,
